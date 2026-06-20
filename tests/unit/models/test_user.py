@@ -55,13 +55,14 @@ class TestUserModel:
 
     async def test_username唯一约束_重复插入失败(self, db_session: AsyncSession):
         from app.core.security import hash_password
+        from sqlalchemy.exc import IntegrityError
         u1 = User(username="uniqueuser", password_hash=hash_password("p1"))
         u2 = User(username="uniqueuser", password_hash=hash_password("p2"))
         db_session.add(u1)
         await db_session.flush()
 
         db_session.add(u2)
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_role可显式设置为admin(self, db_session: AsyncSession):

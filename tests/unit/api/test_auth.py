@@ -94,10 +94,14 @@ class TestLoginAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == "0"
-        assert data["data"]["access_token"] != ""
-        assert data["data"]["refresh_token"] != ""
+        # 强断言：JWT 应为 3 段点分隔的格式
+        access_token = data["data"]["access_token"]
+        assert len(access_token.split(".")) == 3
+        refresh_token = data["data"]["refresh_token"]
+        assert len(refresh_token.split(".")) == 3
         assert data["data"]["token_type"] == "bearer"
-        assert data["data"]["expires_in"] > 0
+        # API.md §2 规定 access_token 15 分钟（900 秒）
+        assert data["data"]["expires_in"] == 900
 
     async def test_密码错误_返回401_E1002(self, async_client: AsyncClient):
         response = await async_client.post("/api/auth/login", json={

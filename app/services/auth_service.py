@@ -179,10 +179,12 @@ async def refresh(db: AsyncSession, refresh_token_str: str) -> TokenResponse:
     )
 
 
-async def logout(db: AsyncSession, refresh_token_str: str) -> None:
+async def logout(db: AsyncSession, refresh_token_str: str, user_id: int) -> None:
     """吊销指定 refresh_token。
 
     对齐 API.md §2 POST /api/auth/logout。
+    校验 access_token 的 user_id 与 refresh_token 的 user_id 一致，
+    防止用户 A 吊销用户 B 的 refresh_token。
     refresh_token 不在数据库中时静默成功（幂等）。
     """
     try:
@@ -191,9 +193,21 @@ async def logout(db: AsyncSession, refresh_token_str: str) -> None:
         # 解码失败静默处理 — token 已无效，效果等同于吊销
         return
 
+    # 校验 user_id 一致性：仅吊销本用户的 refresh_token
+    token_user_id = int(payload.get("sub", 0))
+    if token_user_id != user_id:
+        logger.warning(
+            "logout user_id 不匹配: access_token user_id=%d, refresh_token user_id=%d",
+            user_id, token_user_id,
+        )
+        return
+
     token_hash = hash_token(refresh_token_str)
     result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.user_id == user_id,
+        )
     )
     rt = result.scalar_one_or_none()
 

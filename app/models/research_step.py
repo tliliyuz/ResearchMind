@@ -7,6 +7,7 @@
 from datetime import datetime
 
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -96,6 +97,12 @@ class ResearchStep(Base):
         UTCDateTime,
         default=None,
         server_default=sa.text("NULL"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
     )
 
     # ── 索引 ──

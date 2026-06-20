@@ -44,9 +44,14 @@ async def get_db():
 # ── 当前用户依赖注入 ──────────────────────────────────────────
 
 
-async def get_current_user(request: Request) -> dict:
+async def get_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """从 request.state 获取已认证用户信息（由 AuthMiddleware 注入），
     并校验用户 status 是否被禁用。
+
+    复用路由处理器的 get_db() session，避免每次请求开启额外数据库连接。
 
     路由中通过 Depends(get_current_user) 使用。
 
@@ -59,10 +64,9 @@ async def get_current_user(request: Request) -> dict:
     user_id = request.state.user_id
 
     # 校验用户是否被禁用（主键查询，毫秒级）
-    async with async_session_factory() as session:
-        user = await session.get(User, user_id)
-        if user is None or user.status == "disabled":
-            raise UserDisabledException()
+    user = await db.get(User, user_id)
+    if user is None or user.status == "disabled":
+        raise UserDisabledException()
 
     return {
         "user_id": user_id,

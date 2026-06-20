@@ -12,6 +12,20 @@
 
 > Phase 1 骨架搭建完成（后端 §2.1-2.4 + 前端 §2.5 ✅，测试 §2.7 待执行）。
 
+### Fixed
+- **S-01**: `research_tasks` 新增 `trace` JSON 列（Pipeline 七阶段 Trace 数据），对齐 trace_recorder.py 产出
+- **S-02**: `get_current_user()` 改为复用 `get_db()` session，消除每请求双 DB 连接问题；User 关联 `lazy` 改为 `noload` 避免不必要数据加载
+- **S-03**: `logout()` 新增 `user_id` 一致性校验，防止用户 A 吊销用户 B 的 refresh_token
+- **S-04**: `router/index.js` 导出 `authGuard` 函数；`routerGuards.test.js` 改为 import 真实守卫逻辑，不再复制生产代码
+- **S-05**: `LoginPage.vue` 密码框 `autocomplete` 属性随模式切换（登录 `current-password` / 注册 `new-password`）
+- **N-01**: `RequestIDMiddleware` 从 `BaseHTTPMiddleware` 改为纯 ASGI 中间件，与 AuthMiddleware 统一实现模式
+- **N-02**: `utcnow()` 重命名为 `utc_now()`，避免与 Python 3.12 弃用的 `datetime.utcnow()` 混淆；保留 `utcnow` 兼容别名
+- **N-04**: `Sidebar.vue` / `AdminLayout.vue` 硬编码颜色和尺寸改为 Design Token（`--rm-danger` / `--rm-danger-border` / `--rm-space-*`）
+- **N-09**: `index.html` Font Awesome CDN 链接添加 SRI `integrity` + `crossorigin` 属性
+- `research_steps` / `research_sources` / `evidence_items` / `report_sections` 新增 `updated_at` 列（ORM `onupdate` 自动维护）
+- `DATABASE.md` §2.2-§2.6 同步更新表结构文档
+- 测试弱断言修复：`test_auth.py` access_token 验证 JWT 结构 + expires_in 精确断言、`test_user.py` 使用 `IntegrityError` 替代裸 `Exception`、`test_llm.py` 提取共享 `mock_llm_client` fixture
+
 ### Added
 - **测试基础设施与策略文档（ROADMAP §2.7）**：
   - `docs/TESTING_STRATEGY.md`（v2.0）— 10 章节测试策略纲领：§1 核心质量挑战（Pipeline 7×7×6 状态空间）+ 测试金字塔（含压测层）+ 8 条核心原则 / §2 后端三层 + 前端三层分层 / §3 基础设施（pytest.ini 配置 + SQLite 内存库隔离 + Mock 策略矩阵 + 环境变量隔离）/ §4 后端策略（关键路径 100% 覆盖四模块 + 异常体系 31+ 类三维度验证 + 安全模块 7 函数成对测试 + Auth Service 6 函数全分支含泄露检测 E1009 + LLM 重试策略 5 场景 + Pipeline 9 阶段验证要点 + Trace Recorder + 6 个辅助模块覆盖要点，各节含精简模式示例）/ §5 前端策略（Store 并发防抖 / API 拦截器 / 组件表单校验与 SSE 事件驱动 / 路由守卫）/ §6 GitHub Actions CI/CD（MySQL + Redis service containers + Codecov）+ Pre-commit Hook / §7 分 Phase 覆盖率目标（Phase 1: 后端 ≥85% 行覆盖/≥80% 分支、前端 ≥75% 行覆盖/≥70% 分支，关键路径任何阶段 ≥100%）/ §8 编写规范（命名/结构/标记 + 禁止模式对照表）/ §9 按 Phase 测试重点与关键风险矩阵 / §10 命令速查 + 新模块上线流程。测试进度追踪见 ROADMAP.md

@@ -71,6 +71,12 @@ class ResearchTask(Base):
         sa.Integer, default=0, server_default=sa.text("0"),
     )
 
+    # ── Trace 追踪数据 ──
+    trace: Mapped[dict | None] = mapped_column(
+        sa.JSON, default=None, server_default=sa.text("NULL"),
+        comment="Pipeline 七阶段 Trace JSON（TraceRecorder.finish() 产出），对齐 DATABASE.md §2.2",
+    )
+
     # ── 错误 ──
     error_code: Mapped[str | None] = mapped_column(
         sa.String(50), default=None, server_default=sa.text("NULL"),

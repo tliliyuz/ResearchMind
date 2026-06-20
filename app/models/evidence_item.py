@@ -63,6 +63,12 @@ class EvidenceItem(Base):
         server_default=func.current_timestamp(),
         nullable=False,
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
 
     # ── 索引 ──
     __table_args__ = (

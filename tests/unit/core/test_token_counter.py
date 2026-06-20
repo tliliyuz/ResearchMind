@@ -65,4 +65,4 @@ class TestEstimateTokens:
     def test_结果为正整数(self):
         result = estimate_tokens("some text here")
         assert isinstance(result, int)
-        assert result > 0
+        assert result > 0  # "some text here" = 15 字符，ratio=4.0 → int(15/4)=3

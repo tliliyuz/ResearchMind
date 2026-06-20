@@ -83,6 +83,21 @@ class TestMaxRetries:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 共享 Mock 夹具
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def mock_llm_client():
+    """Mock AsyncOpenAI 客户端 — 供流式/非流式测试类共用，避免重复定义。"""
+    with patch("app.core.llm._get_llm_client") as mock_get:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock()
+        mock_get.return_value = mock_client
+        yield mock_client
+
+
+# ═══════════════════════════════════════════════════════════════
 # 流式调用测试
 # ═══════════════════════════════════════════════════════════════
 
@@ -91,13 +106,8 @@ class TestStreamChatCompletion:
     """stream_chat_completion — 流式 LLM 调用"""
 
     @pytest.fixture(autouse=True)
-    def _mock_client(self):
-        """每个测试自动 Mock AsyncOpenAI 客户端"""
-        with patch("app.core.llm._get_llm_client") as mock_get:
-            self.mock_client = MagicMock()
-            self.mock_client.chat.completions.create = AsyncMock()
-            mock_get.return_value = self.mock_client
-            yield
+    def _setup(self, mock_llm_client):
+        self.mock_client = mock_llm_client
 
     def _make_stream_chunks(self, contents):
         """生成模拟的流式 chunk 列表"""
@@ -197,12 +207,8 @@ class TestChatCompletion:
     """chat_completion — 非流式 LLM 调用"""
 
     @pytest.fixture(autouse=True)
-    def _mock_client(self):
-        with patch("app.core.llm._get_llm_client") as mock_get:
-            self.mock_client = MagicMock()
-            self.mock_client.chat.completions.create = AsyncMock()
-            mock_get.return_value = self.mock_client
-            yield
+    def _setup(self, mock_llm_client):
+        self.mock_client = mock_llm_client
 
     def _make_response(self, content="response", prompt_tokens=10, completion_tokens=5, total_tokens=15):
         choice = MagicMock()

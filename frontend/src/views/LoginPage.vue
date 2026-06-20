@@ -43,7 +43,7 @@
             class="form-input input-with-icon"
             type="password"
             :placeholder="mode === 'login' ? '请输入密码' : '请设置密码（至少 6 个字符）'"
-            autocomplete="current-password"
+            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
           />
         </div>
 

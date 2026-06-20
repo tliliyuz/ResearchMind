@@ -4,9 +4,14 @@
 表结构严格遵循 [DATABASE.md §2](docs/DATABASE.md#2-表结构)。
 """
 
+from datetime import datetime
+
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models._types import UTCDateTime
 
 from app.core.database import Base
 
@@ -39,6 +44,13 @@ class ReportSection(Base):
     )
     sort_order: Mapped[int] = mapped_column(
         sa.Integer, default=0, server_default=sa.text("0"), nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
     )
 
     # ── 索引 ──

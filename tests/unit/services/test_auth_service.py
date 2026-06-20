@@ -279,24 +279,33 @@ class TestLogout:
         return user, rt_str, rt
 
     async def test_正常吊销_refresh_token标记revoked_at(self, db_session: AsyncSession):
-        _, rt_str, rt = await self._setup(db_session)
-        await logout(db_session, rt_str)
+        user, rt_str, rt = await self._setup(db_session)
+        await logout(db_session, rt_str, user.id)
         await db_session.refresh(rt)
         assert rt.revoked_at is not None
 
     async def test_JWT解码失败_静默成功(self, db_session: AsyncSession):
-        # 无效 JWT → 静默处理，不抛异常
-        await logout(db_session, "invalid.token.here")
+        # 无效 JWT → 静默处理，不抛异常（user_id 无意义但仍传入）
+        await logout(db_session, "invalid.token.here", user_id=1)
         # 无异常即通过
 
     async def test_已吊销token再次logout_幂等(self, db_session: AsyncSession):
-        _, rt_str, rt = await self._setup(db_session)
-        await logout(db_session, rt_str)
+        user, rt_str, rt = await self._setup(db_session)
+        await logout(db_session, rt_str, user.id)
         # 第二次 logout 同一 token
-        await logout(db_session, rt_str)
+        await logout(db_session, rt_str, user.id)
         # 无异常即通过 - 幂等
         await db_session.refresh(rt)
         assert rt.revoked_at is not None
+
+    async def test_user_id不匹配_静默跳过不吊销(self, db_session: AsyncSession):
+        """access_token user_id 与 refresh_token user_id 不一致时静默跳过"""
+        user, rt_str, rt = await self._setup(db_session)
+        # 用错误的 user_id 调用 logout
+        await logout(db_session, rt_str, user_id=99999)
+        await db_session.refresh(rt)
+        # token 未被吊销
+        assert rt.revoked_at is None
 
 
 # ═══════════════════════════════════════════════════════════════

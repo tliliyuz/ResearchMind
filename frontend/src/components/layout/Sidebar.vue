@@ -438,7 +438,7 @@ async function handleChangePassword() {
   font-size: var(--rm-text-3xs);
   color: var(--rm-text-inverse-dim);
   font-weight: var(--rm-weight-normal);
-  margin-top: 2px;
+  margin-top: calc(var(--rm-space-1) / 2);
 }
 
 /* 新建研究按钮 */
@@ -533,7 +533,7 @@ async function handleChangePassword() {
 }
 
 .nav-item i {
-  width: 20px;
+  width: var(--rm-space-5);
   text-align: center;
   font-size: var(--rm-text-sm);
 }
@@ -680,15 +680,15 @@ async function handleChangePassword() {
 
 /* 危险操作项 */
 .user-menu-item.danger {
-  color: #FDA4AF;
+  color: var(--rm-danger);
 }
 
 .user-menu-item.danger:hover {
-  background: rgba(225, 29, 72, 0.15);
+  background: var(--rm-danger-border);
 }
 
 .user-menu-item i {
-  width: 18px;
+  width: calc(var(--rm-space-4) + var(--rm-space-1) / 2);
   text-align: center;
   font-size: var(--rm-text-sm);
 }

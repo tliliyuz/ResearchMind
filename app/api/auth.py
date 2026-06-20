@@ -64,13 +64,17 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/logout")
-async def logout_user(req: LogoutRequest, db: AsyncSession = Depends(get_db)):
+async def logout_user(
+    req: LogoutRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """退出登录（需认证 — AuthMiddleware 验证 Bearer Token）。
 
     对齐 API.md §2 POST /api/auth/logout。
-    吊销当前 refresh_token。
+    吊销当前 refresh_token，同时校验 access_token 的 user_id 与 refresh_token 一致。
     """
-    await logout(db, req.refresh_token)
+    await logout(db, req.refresh_token, current_user["user_id"])
     return {"code": "0", "message": "已退出登录", "data": None}
 
 

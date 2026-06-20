@@ -49,8 +49,8 @@ class User(Base):
     )
 
     # ── 关联 ──
-    refresh_tokens = relationship("RefreshToken", back_populates="user", lazy="selectin")
-    research_tasks = relationship("ResearchTask", back_populates="user", lazy="selectin")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", lazy="noload")
+    research_tasks = relationship("ResearchTask", back_populates="user", lazy="noload")
 
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username!r}, role={self.role})>"

@@ -46,12 +46,18 @@ class UTCDateTime(TypeDecorator):
         return value.replace(tzinfo=timezone.utc)
 
 
-def utcnow():
+def utc_now():
     """返回当前 UTC 时间（aware，带 UTC tzinfo）。
 
     aware 返回值与 UTCDateTime 兼容：写入时由 process_bind_param 转为 naive UTC 存储。
+    注意：函数名使用 utc_now()（含下划线），避免与 Python 3.12 弃用的 datetime.utcnow() 混淆。
     """
     return datetime.now(timezone.utc)
+
+
+# 兼容别名：保留旧函数名 utcnow 以便渐进迁移，后续版本移除
+utcnow = utc_now
+
 
 
 def new_uuid():

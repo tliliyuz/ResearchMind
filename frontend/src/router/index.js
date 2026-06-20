@@ -73,7 +73,8 @@ const router = createRouter({
 })
 
 // 路由守卫 — 认证与权限检查
-router.beforeEach((to, from, next) => {
+// 提取为命名导出，便于测试直接引用真实逻辑（禁止测试中复制守卫代码）
+export function authGuard(to, from, next) {
   const authStore = useAuthStore()
 
   // 已登录用户访问公开页面（如登录页）→ 重定向到研究页
@@ -97,6 +98,8 @@ router.beforeEach((to, from, next) => {
   }
 
   next()
-})
+}
+
+router.beforeEach(authGuard)
 
 export default router

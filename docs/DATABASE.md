@@ -118,6 +118,9 @@ CREATE TABLE research_tasks (
     total_sources   INT DEFAULT 0,
     total_evidence  INT DEFAULT 0,
 
+    -- Trace 追踪数据
+    trace           JSON DEFAULT NULL,                          -- Pipeline 七阶段 Trace JSON（TraceRecorder.finish() 产出）
+
     -- 错误
     error_code      VARCHAR(50) DEFAULT NULL,
     error_message   TEXT DEFAULT NULL,
@@ -127,6 +130,7 @@ CREATE TABLE research_tasks (
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at      DATETIME DEFAULT NULL,                      -- Worker 拾取时间
     completed_at    DATETIME DEFAULT NULL,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 记录最后修改时间（ORM onupdate 维护）
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
     INDEX idx_user (user_id),
@@ -151,9 +155,11 @@ CREATE TABLE research_tasks (
 | error_code | VARCHAR(50) | 错误码（E3xxx 系列） |
 | error_message | TEXT | 错误详情 |
 | recoverable | BOOLEAN | 是否支持断点续跑（NULL = 未失败） |
+| trace | JSON | Pipeline 七阶段 Trace JSON，由 TraceRecorder.finish() 写入。结构：task_id / user_id / status / total_duration_ms / total_input_tokens / total_output_tokens / total_cost_usd / phases / phase_durations_ms / error_message / created_at |
 | created_at | DATETIME | 创建时间（UTC） |
 | started_at | DATETIME | Worker 拾取时间（UTC） |
 | completed_at | DATETIME | 完成时间（UTC） |
+| updated_at | DATETIME | 最后修改时间（UTC），ORM onupdate 自动维护 |
 
 > **权威定义**：Task State 的完整转换规则（触发条件、状态间转换表）见 [ARCHITECTURE.md §3.2](ARCHITECTURE.md#32-task-state-转换规则)。Task State 由 `TaskStateResolver` 统一计算，**禁止**由任务自身直接写入。三层状态模型详见 [ARCHITECTURE.md §3.1](ARCHITECTURE.md#31-三层状态模型)。
 
@@ -192,6 +198,7 @@ CREATE TABLE research_steps (
     -- 时间
     started_at      DATETIME DEFAULT NULL,
     completed_at    DATETIME DEFAULT NULL,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
     FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_step_id) REFERENCES research_steps(id) ON DELETE SET NULL,
@@ -218,6 +225,7 @@ CREATE TABLE research_steps (
 | duration_ms | INT | 执行耗时（毫秒） |
 | started_at | DATETIME | 开始时间（UTC） |
 | completed_at | DATETIME | 完成时间（UTC） |
+| updated_at | DATETIME | 最后修改时间（UTC） |
 
 > **权威定义**：Step State 的完整转换规则与各阶段失败策略见 [ARCHITECTURE.md §3.1](ARCHITECTURE.md#31-三层状态模型)（三层状态模型）和 [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-failure-model失败分类学)（失败分类学）。
 
@@ -234,6 +242,7 @@ CREATE TABLE research_sources (
     domain          VARCHAR(255) DEFAULT NULL,
     fetched_at      DATETIME DEFAULT NULL,
     fetch_status    ENUM('success','timeout','blocked','empty') DEFAULT NULL,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
     FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
     UNIQUE KEY uk_task_url (task_id, url(255)),                 -- 同任务内 URL 去重
@@ -250,6 +259,7 @@ CREATE TABLE research_sources (
 | domain | VARCHAR(255) | 域名 |
 | fetched_at | DATETIME | 抓取时间（UTC） |
 | fetch_status | ENUM | 抓取状态：success / timeout / blocked / empty |
+| updated_at | DATETIME | 最后修改时间（UTC） |
 
 ### 2.5 证据条目表 `evidence_items`
 
@@ -271,6 +281,7 @@ CREATE TABLE evidence_items (
     used_in_sections JSON DEFAULT NULL,                         -- ["1", "2.1"]
 
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
     FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
     FOREIGN KEY (source_id) REFERENCES research_sources(id) ON DELETE CASCADE,
@@ -291,6 +302,7 @@ CREATE TABLE evidence_items (
 | relevance_score | DECIMAL(4,3) | Rerank 相关性分数（0.000-1.000） |
 | used_in_sections | JSON | 被哪些章节使用，如 `["1", "2.1"]` |
 | created_at | DATETIME | 创建时间（UTC） |
+| updated_at | DATETIME | 最后修改时间（UTC） |
 
 > `claim_id`、`position_in_doc` 字段为 [v2 预留](ROADMAP.md#5-v20--full-deep-research)。
 
@@ -304,6 +316,7 @@ CREATE TABLE report_sections (
     heading         VARCHAR(300) NOT NULL,
     content         MEDIUMTEXT NOT NULL,                        -- Markdown 正文
     sort_order      INT NOT NULL DEFAULT 0,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
     FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_section_id) REFERENCES report_sections(id) ON DELETE CASCADE,
@@ -320,6 +333,7 @@ CREATE TABLE report_sections (
 | heading | VARCHAR(300) | 章节标题 |
 | content | MEDIUMTEXT | Markdown 正文 |
 | sort_order | INT | 排序序号 |
+| updated_at | DATETIME | 最后修改时间（UTC） |
 
 ### 2.7 章节-证据关联表 `section_evidence`
 

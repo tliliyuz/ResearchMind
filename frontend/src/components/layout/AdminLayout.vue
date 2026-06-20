@@ -164,7 +164,7 @@ const isUsersActive = computed(() => {
   font-size: var(--rm-text-body);
   color: var(--rm-text-inverse-secondary);
   text-decoration: none;
-  margin-bottom: 2px;
+  margin-bottom: calc(var(--rm-space-1) / 2);
 }
 
 .admin-nav-item:hover {
@@ -179,7 +179,7 @@ const isUsersActive = computed(() => {
 }
 
 .admin-nav-item i {
-  width: 20px;
+  width: var(--rm-space-5);
   text-align: center;
   font-size: var(--rm-text-sm);
 }
