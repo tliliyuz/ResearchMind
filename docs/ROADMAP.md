@@ -97,11 +97,11 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Auth Pydantic Schema | `RegisterRequest` / `LoginRequest` / `RefreshRequest` / `LogoutRequest` / `ChangePasswordRequest` / `TokenResponse` / `UserResponse` |
-| ⏳ | Auth Service | `register()` 用户名唯一性检查 + bcrypt 哈希 / `login()` 密码验证 + Token 对生成 / `refresh()` Rotation 刷新（旧 token 立即吊销 + E1009 泄露检测） / `logout()` 吊销当前 refresh_token / `change_password()` 改密后全量吊销 |
-| ⏳ | Auth API 端点 | `POST /api/auth/register` / `POST /api/auth/login` / `POST /api/auth/refresh` / `POST /api/auth/logout` / `PUT /api/auth/password` |
-| ⏳ | `current_user` 依赖注入 | JWT Bearer Token 解析 → 查 `users` 表 → 校验 `status=active` → 注入 `User` 对象 |
-| ⏳ | 全局异常处理器 | `RequestValidationError` → 422/E9003 + `AppException` → 对应 HTTP 码 + `Exception` → 500/E9001 (生产环境屏蔽堆栈) |
+| ✅ | Auth Pydantic Schema | `RegisterRequest` / `LoginRequest` / `RefreshRequest` / `LogoutRequest` / `ChangePasswordRequest` / `TokenResponse` / `UserResponse` |
+| ✅ | Auth Service | `register()` 用户名唯一性检查 + bcrypt 哈希 / `login()` 密码验证 + Token 对生成 / `refresh()` Rotation 刷新（旧 token 立即吊销 + E1009 泄露检测） / `logout()` 吊销当前 refresh_token / `change_password()` 改密后全量吊销 |
+| ✅ | Auth API 端点 | `POST /api/auth/register` / `POST /api/auth/login` / `POST /api/auth/refresh` / `POST /api/auth/logout` / `PUT /api/auth/password` |
+| ✅ | `current_user` 依赖注入 | JWT Bearer Token 解析 → 查 `users` 表 → 校验 `status=active` → 注入 `User` 对象 |
+| ✅ | 全局异常处理器 | `RequestValidationError` → 422/E9003 + `AppException` → 对应 HTTP 码 + `Exception` → 500/E9001 (生产环境屏蔽堆栈) |
 
 > **认证接口详设**：[API.md §2](API.md#2-认证接口)。错误码体系：[API.md §5](API.md#5-错误码表完整)。
 

@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.core.exceptions import AppException
 from app.middleware.auth_middleware import AuthMiddleware
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+    """AppException → 对应 HTTP 状态码。
+
+    AppException 已通过 HTTPException.detail 携带完整响应体
+    （{"code", "message", "detail"}），Starlette 对 dict 类型的 detail
+    直接作为 JSON 响应体返回。
+    """
+    logger.warning(
+        "业务异常: code=%s, message=%s, status=%d",
+        exc.error_code, exc.error_message, exc.status_code,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.detail,
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """未预期异常 → E9001 (500)。"""
@@ -111,7 +130,8 @@ async def health_check():
     }
 
 
-# ── 路由注册（后续 Phase 引入） ────────────────────────────
-# from app.api import auth, research
-# app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
-# app.include_router(research.router, prefix="/api/research", tags=["研究任务"])
+# ── 路由注册 ──────────────────────────────────────────────
+from app.api import auth
+
+app.include_router(auth.router, prefix="/api/auth")
+# app.include_router(research.router, prefix="/api/research", tags=["研究任务"])  # Phase 2
