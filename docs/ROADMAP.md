@@ -140,7 +140,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ⏳ | Auth API 接口测试 | 接口测试 | POST `/api/auth/register` + `/api/auth/login` + `/api/auth/refresh` + `/api/auth/logout` + `PUT /api/auth/password` 正常流程 + 错误码（E1001/E1002/E1006-E1011） |
 | ⏳ | Pydantic Schema 校验测试 | 单元测试 | `RegisterRequest` / `LoginRequest` 字段校验（用户名长度/密码长度） |
 | ⏳ | 用户模型测试 | 单元测试 | `User` ORM 字段默认值、`relationship` 关联 |
-| ⏳ | 数据库迁移测试 | 集成测试 | `alembic upgrade head` + 全部 8 张表存在性 + 外键约束 + 索引 |
 | ⏳ | 异常处理器测试 | 单元测试 | `AppException` → HTTP 状态码映射 / `RequestValidationError` → 422/E9003 / 生产环境堆栈屏蔽 / 未知异常兜底 |
 | ⏳ | 基础设施复用模块测试 | 单元测试 | Token 估计算法（中英文自适应）/ LLM 客户端 Mock 调用 / 时区策略（UTC tzinfo 读写一致性） |
 | ⏳ | 前端 LoginPage 组件测试 | 组件测试 | 表单渲染 / Tab 切换（登录↔注册）/ 提交按钮 + loading / 错误提示 / 登录成功跳转 / 注册成功切回登录 |
