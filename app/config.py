@@ -42,13 +42,49 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_MODEL: str = "deepseek-v4-pro"
+    LLM_FLASH_MODEL: str = "deepseek-v4-flash"  # 轻量任务（Rerank / 标题生成）
 
     # [v2] 分级模型（预留）
     # LLM_PLANNING_MODEL: str = "deepseek-v4-pro"
-    # LLM_FLASH_MODEL: str = "deepseek-v4-flash"
+    # LLM_BIG_MODEL: str = "deepseek-v4-pro"
 
     # ── 搜索 ──
     TAVILY_API_KEY: str = ""
+    TAVILY_BASE_URL: str = "https://api.tavily.com"
+    TAVILY_MAX_RESULTS_PER_QUERY: int = 5
+    TAVILY_SEARCH_DEPTH: str = "advanced"
+    TAVILY_TOTAL_RESULTS_LIMIT: int = 25
+
+    # ── Fetch ──
+    FETCH_TIMEOUT: int = 15
+    FETCH_MAX_CONTENT_LENGTH: int = 102400  # 100KB
+    FETCH_MAX_RETRIES: int = 1
+
+    # ── Token 估算 ──
+    TOKEN_CHINESE_RATIO: float = 1.5
+    TOKEN_ENGLISH_RATIO: float = 4.0
+    TOKEN_CHINESE_THRESHOLD: float = 0.3
+
+    # ── Rerank ──
+    RERANK_BM25_SEGMENT_MAX_CHARS: int = 2000
+    RERANK_BM25_TOP_K_PER_DOC: int = 3
+    RERANK_CANDIDATE_MAX: int = 45
+
+    # ── Pipeline ──
+    PIPELINE_PLANNER_MAX_RETRIES: int = 3
+    PIPELINE_SYNTHESIS_MAX_RETRIES: int = 3
+    PIPELINE_RERANK_MAX_RETRIES: int = 2
+    PIPELINE_RENDER_MAX_RETRIES: int = 1
+
+    # ── SSE ──
+    SSE_HEARTBEAT_INTERVAL: int = 15
+
+    # ── 限流（Phase 4 激活，代码提前就位）──
+    RATE_LIMIT_ENABLED: bool = False  # Phase 4 压测后启用
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_RESEARCH_PER_MINUTE: int = 5    # 创建研究任务 5次/分钟
+    RATE_LIMIT_LOGIN_PER_MINUTE: int = 10      # 登录/注册 10次/分钟
+    RATE_LIMIT_DEFAULT_PER_MINUTE: int = 120   # 全局默认 120次/分钟
 
     # ── JWT ──
     JWT_SECRET_KEY: str = ""

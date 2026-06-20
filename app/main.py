@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.middleware.auth_middleware import AuthMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Auth 中间件（JWT 验证，写入 request.state） ──────────────
+
+app.add_middleware(AuthMiddleware)
 
 # ── 全局异常处理器 ───────────────────────────────────────
 

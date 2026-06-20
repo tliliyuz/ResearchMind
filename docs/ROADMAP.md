@@ -76,15 +76,22 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 复用方式 |
 |:---|:---|:---|:---|
-| ⏳ | 异常体系 | `app/core/exceptions.py` — `AppException` 基类 + `code`/`message`/`detail` 三元组 | 直接复制模板，替换错误码枚举（E1xxx/E2xxx/E3xxx/E9xxx） |
-| ⏳ | LLM 客户端 | `app/core/llm.py` — DeepSeek SDK 封装（流式/非流式调用、错误处理、重试） | 直接复制，改模型默认值为 `deepseek-v4-pro` |
-| ⏳ | Token 估算 | `app/core/token_counter.py` — 中英文自适应算法（中文>30%→1.5，否则 4.0） | 直接复制函数，零改动 |
-| ⏳ | JWT 安全模块 | `app/core/security.py` — `hash_password` / `verify_password` / `create_access_token` / `decode_access_token` / `create_refresh_token` | 直接复制，微调 `users` 表字段映射 |
-| ⏳ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_admin` 两层分离 | 直接复制模式，替换 Task 级权限检查逻辑 |
-| ⏳ | 时区策略 | `app/models/_types.py`（`UTCDateTime`）+ `app/core/database.py`（`SET time_zone='+00:00'`）+ 四层 UTC 统一 | 直接复制 `UTCDateTime` 与四层 UTC 策略，规格见 [INFRASTRUCTURE_REUSE.md §5.1](../INFRASTRUCTURE_REUSE.md#51-时间字段与时区策略) |
-| ⏳ | SSE 流式框架 | `app/services/sse_stream.py` — 手动 `StreamingResponse` + 15s 心跳注释帧 + `seq` 序号有序保证 | 保留 SSE 框架，Phase 2-3 替换全部事件类型 |
-| ⏳ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + context manager 模式 | 直接复制，改阶段名称为 Pipeline 七阶段 |
-| ⏳ | BM25 核心（轻量版） | `app/pipeline/bm25.py` — `BM25Okapi` + `jieba.lcut` 核心，~60 行纯内存计算 | 不复用 DocMind 的 ~400 行版（含三级缓存），重写轻量版 |
+| ✅ | 异常体系 | `app/core/exceptions.py` — `AppException` 基类 + `code`/`message`/`detail` 三元组，31 个异常类 | 直接复制模板，替换错误码枚举（E1xxx/E2xxx/E3xxx/E9xxx），detail 扩展为 `dict\|str` |
+| ✅ | LLM 客户端 | `app/core/llm.py` — DeepSeek SDK 封装（流式/非流式调用、错误分类、分级重试） | 直接复制，改模型默认值为 `deepseek-v4-pro`，新增 timeout/rate_limit/auth_error 重试策略 |
+| ✅ | Token 估算 | `app/core/token_counter.py` — 中英文自适应算法（中文>30%→1.5，否则 4.0） | 直接复制函数，零改动 |
+| ✅ | JWT 安全模块 | `app/core/security.py` — `hash_password` / `verify_password` / `create_access_token` / `decode_access_token` / `create_refresh_token` | 直接复制，微调 `users` 表字段映射 |
+| ✅ | JWT 认证中间件 | `app/middleware/auth_middleware.py` — ASGI 中间件，验证 Bearer Token，写入 `request.state` | 直接复制，错误码 E5004→E1004，detail 改为结构化 JSON |
+| ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验）/ `require_admin` | 直接复制，`get_db` 使用 `async_session_factory` 创建会话 |
+| ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` / `require_admin` 三层分离 | 直接复制模式，替换 Task 级权限检查逻辑 |
+| ✅ | 时区策略 | `app/models/_types.py`（`UTCDateTime`）+ `app/core/database.py`（`SET time_zone='+00:00'`）+ 四层 UTC 统一 | 直接复制 `UTCDateTime` 与四层 UTC 策略（Phase 1 脚手架已提前完成） |
+| ✅ | SSE 流式框架 | `app/core/sse.py` — 手动 `StreamingResponse` + 15s 心跳注释帧 | 保留 SSE 传输层框架，Phase 2-3 替换全部事件类型 |
+| ✅ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + Pipeline 七阶段 | 直接复制类结构，改阶段名称为 Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render |
+| ✅ | BM25 核心（轻量版） | `app/pipeline/bm25.py` — `BM25Okapi` + `jieba.lcut` 核心，72 行纯内存计算 | 不复用 DocMind 的 ~686 行版（含三级缓存），重写轻量版 |
+| ✅ | 结构化日志 | `app/core/logging_config.py` — contextvars（`request_id_var`/`user_id_var`）+ JSONFormatter + RequestIDFilter + `setup_logging()` | 直接复制，零改动 |
+| ✅ | Request ID 中间件 | `app/middleware/request_id_middleware.py` — 生成/透传 `X-Request-ID` + 注入 contextvars | 直接复制，零改动 |
+| ✅ | Redis 客户端 | `app/core/redis_client.py` — 同步/异步双客户端 + Windows 兼容包装 | 直接复制，零改动（Phase 2 Celery + SSE Bridge 依赖） |
+| ✅ | 通用工具 | `app/core/utils.py` — `escape_like()` SQL LIKE 转义 | 直接复制，零改动 |
+| ✅ | 限流中间件 | `app/middleware/rate_limit_middleware.py` — Redis 固定窗口计数器 + Lua 原子脚本 | 直接复制，接口组映射调整：`chat`→`research`，移除 `upload`，保留 `login`/`default`（Phase 4 激活，代码提前就位） |
 
 ### 2.4 [后端] 认证系统
 

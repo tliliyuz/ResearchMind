@@ -3,10 +3,10 @@
 
 - engine：全局异步引擎，MySQL time_zone='+00:00' 四层 UTC 统一
 - async_session_factory：异步会话工厂，expire_on_commit=False
-- get_db()：FastAPI 依赖注入，yield session 并自动关闭
 - Base：ORM 模型基类，所有模型通过 app.models 导入后注册
 
 禁止在各模块中自行创建 engine/session —— 统一通过本模块获取。
+FastAPI 依赖注入 `get_db()` 定义在 `app.dependencies`。
 """
 
 from sqlalchemy import event
@@ -58,24 +58,3 @@ class Base(DeclarativeBase):
     所有模型类继承自此 Base，并通过 `app.models.__init__` 导入
     以使 Alembic 的 target_metadata 能够发现全部表。
     """
-
-
-# ── FastAPI 依赖注入 ─────────────────────────────────────────
-
-
-async def get_db():
-    """
-    FastAPI 依赖注入：提供异步数据库会话。
-
-    用法：
-        @router.get("/something")
-        async def handler(db: AsyncSession = Depends(get_db)):
-            ...
-    """
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
