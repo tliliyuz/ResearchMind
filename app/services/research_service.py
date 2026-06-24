@@ -1,12 +1,10 @@
 """研究任务业务逻辑 — 创建 / 列表 / 详情 / 删除
 
 对齐 API.md §3.1：
-- create_task()：校验 → 写入 research_tasks + 首个 research_step → commit
+- create_task()：校验 → 写入 research_tasks + 首个 research_step → commit → Celery 分发
 - get_task_list()：当前用户任务分页列表，按 created_at DESC
 - get_task_detail()：单任务状态 + progress 快照
 - delete_task()：FK CASCADE 级联清理全部派生数据
-
-Celery 分发 (task.delay) 在 Phase 2.3.2 激活，当前预留导入点。
 """
 
 import logging
@@ -40,9 +38,6 @@ from app.schemas.research import (
 
 logger = logging.getLogger(__name__)
 
-# Phase 2.3.2 激活 Celery 分发
-# from app.tasks.research_task import execute_research_task
-
 
 # ── 创建任务 ────────────────────────────────────────────────────
 
@@ -57,10 +52,10 @@ async def create_task(
     1. 校验 topic 长度与 requirements 合法性
     2. 写入 research_tasks (status=pending)
     3. 写入首个 research_step (planning, pending)
-    4. 显式 commit（避免 Celery 竞态窗口）
-    5. 返回 task_id + status + created_at
+    4. 返回 task_id + status + created_at
 
-    Celery 分发 (task.delay) 在 Phase 2.3.2 激活。
+    注意：Celery 分发（commit + delay）由 API 层在返回前执行，
+    避免在 Service 层 commit 破坏测试事务隔离。
     """
     _validate_create_request(request)
 
@@ -90,13 +85,9 @@ async def create_task(
     # 3. 更新 task 的步骤计数
     task.total_steps = 1
 
-    # 4. flush 获取 ID（无需显式 commit；Phase 2.3.2 引入 Celery 分发时，
-    #    需在此处 await db.commit() 以避免 Worker 查不到 task 的竞态窗口）
+    # 4. flush 获取 ID（Celery 分发由 API 层在 commit 后执行，
+    #    以避免 Service 层 commit 破坏测试事务隔离）
     await db.flush()
-
-    # Phase 2.3.2: 分派到 Celery Worker
-    # await db.commit()  # 必须在 delay 之前提交，避免竞态
-    # execute_research_task.delay(str(task.id))
 
     logger.info(
         "研究任务已创建: task_id=%s, user_id=%d, topic=%s, task_type=%s",

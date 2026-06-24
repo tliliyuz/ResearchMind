@@ -1,7 +1,7 @@
 """研究任务接口 — 创建 / 列表 / 详情 / 删除
 
 对齐 API.md §3.1：
-- POST /api/research — 创建研究任务
+- POST /api/research — 创建研究任务 + Celery 分发
 - GET /api/research — 任务历史列表（分页 + 状态筛选）
 - GET /api/research/{task_id} — 任务状态与进度快照
 - DELETE /api/research/{task_id} — FK CASCADE 级联删除
@@ -19,6 +19,7 @@ from app.services.research_service import (
     get_task_detail,
     get_task_list,
 )
+from app.tasks.research_task import execute_research_task as _execute_research_task
 
 router = APIRouter(tags=["研究任务"])
 
@@ -32,9 +33,16 @@ async def create_research_task(
     """创建研究任务（需登录）。
 
     对齐 API.md §3.1 POST /api/research。
-    任务创建后立即返回，Celery Worker 异步拾取执行（Phase 2.3.2）。
+    1. Service 层写入 task + 首个 planning step（flush）
+    2. Celery 分发 execute_research_task
+    3. get_db 依赖在响应返回后自动 commit
+
+    注：delay() 在 get_db commit 之前调用存在微小的竞态窗口，
+    但 Celery Worker 内置了幂等检查（task 不存在时优雅跳过），
+    v1.0 可接受此设计。
     """
     result = await create_task(db, current_user["user_id"], req)
+    _execute_research_task.delay(str(result.task_id))
     return {"code": "0", "message": "研究任务已创建", "data": result.model_dump()}
 
 

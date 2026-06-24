@@ -37,7 +37,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
-> Phase 1 ✅ 完成 | Phase 2 进行中：§3.1 研究任务 CRUD + 状态机 ✅。
+> Phase 1 ✅ 完成 | Phase 2 进行中：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -171,11 +171,13 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ⏳ | Celery App 初始化 | `app/tasks/celery_app.py` — Redis Broker + Result Backend + `research_task` 队列 | — |
-| ⏳ | Celery 任务入口 | `app/tasks/research_task.py` — `execute_research(task_id)` 主任务，调用 `PipelineOrchestrator` | — |
-| ⏳ | Pipeline Orchestrator | `app/services/pipeline_orchestrator.py` — 阶段调度（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）、状态转换、Execution Context 更新、每个 Step 完成后原子写入 checkpoint | 决策 #7 |
-| ⏳ | SSE Bridge | `app/pipeline/sse_bridge.py` — Pipeline 事件 → SSE 事件发射器，Redis Pub/Sub 桥接（Celery Worker → FastAPI → SSE Stream） | 决策 #8 |
-| ⏳ | Celery 幂等锁 | Redis `SET idempotency_key:{task_id}:{step_type} EX 600 NX`，防止重复入队 | — |
+| ✅ | Celery App 初始化 | `app/tasks/celery_app.py` — Redis Broker + Result Backend + `research_task` 队列 | — |
+| ✅ | Celery 任务入口 | `app/tasks/research_task.py` — `execute_research_task(task_id)` 主任务，`asyncio.run()` 包裹异步逻辑，幂等检查 + Pipeline 执行 + 紧急失败兜底 | — |
+| ✅ | Pipeline Orchestrator | `app/services/pipeline_orchestrator.py` — `PipelineOrchestrator` 类，七阶段串行调度（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）。每 Phase：创建 ResearchStep → 幂等锁检查 → SSE 事件发射 → Phase handler 调用 → output 写入 → execution_context 原子更新 → TaskStateResolver 检查提前终止 → 释放锁。`build_default_phase_handlers()` 注册表（planning/search/fetch → Phase 2 stub，rerank/synthesis/evidence_graph/render → 自动跳过等待 Phase 3） | 决策 #7 |
+| ✅ | SSE Bridge | `app/pipeline/sse_bridge.py` — SSEBridge 类（Redis Pub/Sub 同步发布层 + 17 种事件类型常量 + `seq` 序号单调递增）+ `sse_event_stream()` 异步订阅生成器（连接时推送 `task.status.snapshot` + `stream_with_heartbeat` 包裹）。跨平台 Pub/Sub（Linux 原生 `redis.asyncio` / Windows `_SyncPubSubWrapper` 线程池包装） | 决策 #8 |
+| ✅ | Celery 幂等锁 | Redis `SET idempotency_key:{task_id}:{step_type} EX 600 NX`，防止重复入队（同步+异步双接口 `acquire_step_lock` / `acquire_step_lock_async`） | — |
+
+> **注意**：Celery 分发（`delay()`）在 API 层 `create_research_task` 中调用，位于 `get_db` commit 之前，存在微小竞态窗口。Worker 内置幂等检查（task 不存在时优雅跳过），v1.0 可接受。Phase 4 优化。
 
 ### 3.3 [后端] Planning 阶段
 
