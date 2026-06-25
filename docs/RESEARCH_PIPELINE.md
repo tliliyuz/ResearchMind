@@ -752,9 +752,11 @@ EvidenceGraph（结构化字典，可 JSON 序列化）
   4. 写入 section_evidence 关联表（M:N）
 
 示例：
-  Section.content: "NIST 正在推进 PQC 标准化[来源1]，预计 2024 年发布最终标准[来源3]。"
+  Section.content: "NIST 正在推进 PQC 标准化[来源0]，预计 2024 年发布最终标准[来源2]。"
   → section.sources: [{"id": 1, "evidence_index": 0}, {"id": 3, "evidence_index": 2}]
 ```
+
+> **[Deviation]** `[来源N]` 中的 `N` 使用 0-based `GraphItem.index`（与 `API.md §3.3` 及前端 `markdown.js` 解析一致），**不等同于** `research_sources.id`。`section.sources[].id` 仍为 `research_sources.id`，`section.sources[].evidence_index` 存储 `GraphItem.index`。原示例中 `[来源1]` 映射到 `evidence_index: 0` 的表述已修正。
 
 ### 8.5 输出 JSON Schema
 

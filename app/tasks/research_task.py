@@ -5,10 +5,11 @@ Worker 拾取任务后调用 PipelineOrchestrator 执行全 Pipeline。
 
 执行流程：
 1. Celery Worker 收到 task_id
-2. asyncio.run() 包裹异步逻辑
-3. 创建 DB session → 加载 ResearchTask → 实例化 Orchestrator → run()
-4. 顶层异常捕获 → 更新 task status 为 failed
-5. 无论成功/失败，session 最终 commit
+2. 获取/创建当前 Worker 进程的事件循环（避免 asyncio.run() 反复关闭 loop）
+3. loop.run_until_complete() 执行异步 Pipeline
+4. 创建 DB session → 加载 ResearchTask → 实例化 Orchestrator → run()
+5. 顶层异常捕获 → 更新 task status 为 failed
+6. 无论成功/失败，session 最终 commit
 """
 
 import asyncio
@@ -28,6 +29,21 @@ from app.services.pipeline_orchestrator import (
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    """获取当前 Worker 进程的事件循环；若未设置或已关闭则新建。"""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    return loop
 
 
 @celery_app.task(
@@ -50,15 +66,17 @@ def execute_research_task(self, task_id: str) -> dict:
     """
     logger.info("Celery Worker 拾取任务: task_id=%s", task_id)
 
+    loop = _get_worker_loop()
     try:
-        result = asyncio.run(_run_pipeline(task_id))
+        result = loop.run_until_complete(_run_pipeline(task_id))
         logger.info("Pipeline 执行完成: task_id=%s, status=%s", task_id, result.get("status"))
         return result
     except Exception as e:
         logger.exception("Celery 任务执行异常: task_id=%s, error=%s", task_id, e)
         # 兜底：尝试同步写入失败状态
         try:
-            asyncio.run(_emergency_fail(task_id, str(e)))
+            loop = _get_worker_loop()
+            loop.run_until_complete(_emergency_fail(task_id, str(e)))
         except Exception:
             logger.exception("紧急写入失败状态也失败了: task_id=%s", task_id)
         return {"status": "failed", "task_id": task_id, "error": str(e)}
@@ -68,7 +86,7 @@ def execute_research_task(self, task_id: str) -> dict:
 
 
 async def _run_pipeline(task_id: str) -> dict:
-    """异步 Pipeline 执行体（在 asyncio.run() 中运行）。
+    """异步 Pipeline 执行体（在 Worker 持久事件循环中运行）。
 
     Steps:
     1. 打开 DB session
@@ -114,6 +132,10 @@ async def _run_pipeline(task_id: str) -> dict:
 
         # 4. 提交全部变更（Step 状态 + Execution Context + Task 状态）
         await session.commit()
+
+        # 5. 刷新内存对象：Orchestrator 内部可能通过 update 直接修改 DB，
+        #    避免返回 stale 状态或触发懒加载异常
+        await session.refresh(task)
 
         return {"status": task.status, "task_id": task_id}
 
