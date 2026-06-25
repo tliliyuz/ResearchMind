@@ -10,7 +10,7 @@ from app.models.research_source import ResearchSource
 from app.pipeline.searcher import (
     run_search,
     _extract_domain,
-    _get_sub_questions_from_planning,
+    _load_sub_questions,
 )
 
 
@@ -32,38 +32,63 @@ class TestExtractDomain:
         assert _extract_domain("not-a-url") == "not-a-url"
 
 
-class TestGetSubQuestionsFromPlanning:
-    """从 Planning 输出中提取 sub_questions。"""
+def _make_planning_step(sub_questions: list[str]) -> MagicMock:
+    """创建模拟 Planning Step（用于 _load_sub_questions）。"""
+    step = MagicMock(spec=ResearchStep)
+    step.output = {"sub_questions": sub_questions}
+    step.status = "completed"
+    step.completed_at = None
+    return step
 
-    def test_正常提取(self):
-        parent = MagicMock(spec=ResearchStep)
-        parent.output = {"sub_questions": ["q1", "q2", "q3"]}
-        step = MagicMock(spec=ResearchStep)
-        step.parent_step = parent
 
-        result = _get_sub_questions_from_planning(step)
+class TestLoadSubQuestions:
+    """从 Planning 输出中异步读取 sub_questions。"""
+
+    def _setup_session(self, planning_step: MagicMock | None) -> AsyncMock:
+        session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = planning_step
+        session.execute.return_value = result_mock
+        return session
+
+    @pytest.mark.asyncio
+    async def test_正常提取(self):
+        task = MagicMock(spec=ResearchTask)
+        task.id = "task-uuid-001"
+        session = self._setup_session(_make_planning_step(["q1", "q2", "q3"]))
+
+        result = await _load_sub_questions(session, task)
         assert result == ["q1", "q2", "q3"]
 
-    def test_parent不存在(self):
-        step = MagicMock(spec=ResearchStep)
-        step.parent_step = None
-        result = _get_sub_questions_from_planning(step)
+    @pytest.mark.asyncio
+    async def test_无PlanningStep(self):
+        task = MagicMock(spec=ResearchTask)
+        task.id = "task-uuid-001"
+        session = self._setup_session(None)
+
+        result = await _load_sub_questions(session, task)
         assert result == []
 
-    def test_parent_output为None(self):
-        parent = MagicMock(spec=ResearchStep)
-        parent.output = None
-        step = MagicMock(spec=ResearchStep)
-        step.parent_step = parent
-        result = _get_sub_questions_from_planning(step)
+    @pytest.mark.asyncio
+    async def test_planning_output为None(self):
+        task = MagicMock(spec=ResearchTask)
+        task.id = "task-uuid-001"
+        planning_step = _make_planning_step(["q1"])
+        planning_step.output = None
+        session = self._setup_session(planning_step)
+
+        result = await _load_sub_questions(session, task)
         assert result == []
 
-    def test_parent_output无sub_questions(self):
-        parent = MagicMock(spec=ResearchStep)
-        parent.output = {"other": "data"}
-        step = MagicMock(spec=ResearchStep)
-        step.parent_step = parent
-        result = _get_sub_questions_from_planning(step)
+    @pytest.mark.asyncio
+    async def test_planning_output无sub_questions(self):
+        task = MagicMock(spec=ResearchTask)
+        task.id = "task-uuid-001"
+        planning_step = _make_planning_step(["q1"])
+        planning_step.output = {"other": "data"}
+        session = self._setup_session(planning_step)
+
+        result = await _load_sub_questions(session, task)
         assert result == []
 
 
@@ -106,17 +131,6 @@ def _make_step(**overrides) -> MagicMock:
     step = MagicMock(spec=ResearchStep)
     for k, v in defaults.items():
         setattr(step, k, v)
-
-    # 模拟 parent_step（Planning 输出）
-    parent = MagicMock(spec=ResearchStep)
-    parent.output = {
-        "sub_questions": [
-            "量子计算对密码学的威胁",
-            "后量子密码标准化进展",
-            "NIST后量子密码竞赛结果",
-        ],
-    }
-    step.parent_step = parent
     return step
 
 
@@ -136,6 +150,13 @@ def _make_tavily_response(urls: list[str]) -> dict:
     }
 
 
+def _mock_planning_in_session(session: AsyncMock, sub_questions: list[str]) -> None:
+    """让 session.execute 返回包含指定 sub_questions 的 Planning Step。"""
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = _make_planning_step(sub_questions)
+    session.execute.return_value = result_mock
+
+
 # ═══════════════════════════════════════════════════════════════
 # run_search 正常流程
 # ═══════════════════════════════════════════════════════════════
@@ -144,12 +165,19 @@ def _make_tavily_response(urls: list[str]) -> dict:
 class TestRunSearchSuccess:
     """正常搜索流程。"""
 
+    DEFAULT_SUB_QUESTIONS = [
+        "量子计算对密码学的威胁",
+        "后量子密码标准化进展",
+        "NIST后量子密码竞赛结果",
+    ]
+
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
         self.sse_bridge = MagicMock()
         self.db_session = AsyncMock()
+        _mock_planning_in_session(self.db_session, self.DEFAULT_SUB_QUESTIONS)
 
     @pytest.mark.asyncio
     async def test_正常搜索_返回去重结果(self):
@@ -220,8 +248,8 @@ class TestRunSearchSuccess:
 
     @pytest.mark.asyncio
     async def test_无子问题输入_返回空结果(self):
-        # 无 Planning parent 输出
-        self.step.parent_step = None
+        # 让 Planning 输出空子问题
+        _mock_planning_in_session(self.db_session, [])
 
         output = await run_search(
             self.task, self.step, self.db_session, self.sse_bridge,
@@ -234,12 +262,19 @@ class TestRunSearchSuccess:
 class TestRunSearchFailure:
     """失败策略：单子问题降级 / 全失败 E3102。"""
 
+    DEFAULT_SUB_QUESTIONS = [
+        "量子计算对密码学的威胁",
+        "后量子密码标准化进展",
+        "NIST后量子密码竞赛结果",
+    ]
+
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
         self.sse_bridge = MagicMock()
         self.db_session = AsyncMock()
+        _mock_planning_in_session(self.db_session, self.DEFAULT_SUB_QUESTIONS)
 
     @pytest.mark.asyncio
     async def test_单子问题0结果_子step_SKIPPED(self):
@@ -280,9 +315,7 @@ class TestRunSearchFailure:
                 _make_tavily_response(["https://recovered.com/1"]),  # 重试成功
             ]
             # 只保留1个子问题来测试重试
-            self.step.parent_step.output = {
-                "sub_questions": ["单个子问题"],
-            }
+            _mock_planning_in_session(self.db_session, ["单个子问题"])
 
             output = await run_search(
                 self.task, self.step, self.db_session, self.sse_bridge,

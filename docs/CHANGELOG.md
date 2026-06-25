@@ -16,7 +16,42 @@
 > Phase 2.3.3-§3.6 Pipeline 前半段完成：Planning（LLM）+ Search（Tavily）+ Fetch（HTTP+trafilatura）+ SSE 端点（ROADMAP §3.3-§3.6 ✅）。
 > Phase 2 §3.7 前端实现完成：ResearchPage + HistoryPage + Sidebar 历史任务 + SSE 框架（ROADMAP §3.7 ✅）。
 > Phase 2 §3.9 测试完成：Celery 幂等锁 + 5 个前端测试全绿，Phase 2 全部关闭准入 Phase 3（ROADMAP §3.9 ✅）。
-> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅。
+> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅。
+
+### Added
+- **Phase 3 §4.4 Report Render 阶段实现（ROADMAP §4.4 / RESEARCH_PIPELINE §8）**——Evidence Graph 渲染为 Markdown 报告：
+  - `app/pipeline/renderer.py` — Report Render 阶段完整实现（~360 行）：从最新 completed Evidence Graph Step 读取 `output["graph"]`；按 `task_type` 选择模板（`comparison_v1` / `explainer_v1` / `analysis_v1`）；构建 System Prompt（含 topic/task_type/language/模板说明/证据图谱摘要/证据详情）；调用 `deepseek-v4-pro`（`deep_thinking=False`，`temperature=0.5`，`max_tokens=8000`）；从 LLM 输出提取 JSON 并解析为 `RenderSection` 列表；正则提取正文 `[来源N]` 引用，按 `GraphItem.index` 映射到 `source_id` + `evidence_index`，去重排序后持久化到 `report_sections` 与 `section_evidence`；更新 `evidence_items.used_in_sections`；失败策略：LLM 调用/JSON 解析失败重试 1 次（`settings.PIPELINE_RENDER_MAX_RETRIES`），耗尽 → `RenderFailedException(E3107, recoverable=True)`；Section 数量不足不阻断；无引用/非法引用章节标记 `citation_issues=True`；返回 `sections_count`/`citations_count`/`template`/`model`/`retry_count`/`prompt_tokens`/`completion_tokens`/`duration_ms`/`citation_issues`
+  - `app/pipeline/evidence_graph.py` — `GraphItem` 新增 `evidence_item_id` 字段并在 `to_dict()` 输出，供 Render 阶段直接更新 `evidence_items.used_in_sections`
+  - `app/services/pipeline_orchestrator.py` — `build_default_phase_handlers()` 注册 `render` handler；`_complete_step()` 中对 `render` Step 调用 `TraceRecorder.record_render()` 埋点
+  - `app/schemas/research.py` — 新增报告相关 Schema：`ReportSourceSchema` / `ReportSectionSourceSchema` / `ReportSectionSchema` / `ReportSchema` / `ResearchReportResponse`
+  - `app/services/research_service.py` — 新增 `get_report()`：校验任务 completed/partially_completed，从 `evidence_graph` Step 读取 graph，按 `sort_order` 查询 `report_sections` 与 `section_evidence`，组装 `ResearchReportResponse`
+  - `app/api/research.py` — 新增 `GET /api/research/{task_id}/report` 端点，错误码 E2001/E2002/E2003
+  - `tests/unit/pipeline/test_renderer.py` — Render 单元测试（10 用例：正常渲染并持久化 report_sections/section_evidence/used_in_sections / 3 种 task_type 模板分支 / 引用按 evidence_index 去重排序 / 无引用章节标记 citation_issues / 无效 JSON 重试后成功 / 无效 JSON 重试耗尽→E3107 call_count=2 / LLM 异常重试耗尽→E3107 call_count=2 / section 数量不足不阻断 / 越界 index 过滤并标记 citation_issues / 空 Evidence Graph→E3107）
+  - `tests/unit/api/test_research.py` — 追加 Report API 测试（4 用例：completed 任务返回完整报告 JSON / 任务不存在→404 E2001 / 无权访问→403 E2002 / 未完成任务→409 E2003）
+  - `tests/unit/services/test_research_service.py` — 追加 `get_report` Service 测试（4 用例：completed 返回完整报告 / partially_completed 可获取 / running→E2003 / 无 Evidence Graph Step→E2003）
+
+### Fixed
+- **修复 Celery Worker 事件循环冲突导致的 `Future attached to a different loop`**：`app/tasks/research_task.py` 中 `execute_research_task` 不再使用 `asyncio.run()`（每次任务新建/关闭事件循环），改为通过 `_get_worker_loop()` 获取或创建当前 Worker 进程的持久事件循环，使用 `loop.run_until_complete()` 执行异步 Pipeline；避免 SQLAlchemy async engine 连接池复用旧连接时 Future 绑定到已关闭 loop 的问题
+- **`docs/RESEARCH_PIPELINE.md` §8.4 引用锚点示例 [Deviation]**：明确正文中 `[来源N]` 的 `N` 使用 0-based `GraphItem.index`（与 `API.md §3.3` 及前端 `markdown.js` 解析一致），修正原示例中 `[来源1]` 映射到 `evidence_index: 0` 的表述；`section.sources[].id` 仍为 `research_sources.id`，`section.sources[].evidence_index` 存储 `GraphItem.index`
+
+### Fixed
+- **修复 MySQL 不兼容 `NULLS LAST` 导致 Synthesis / Evidence Graph Build 阶段 `ProgrammingError (1064)`**：
+  - `app/pipeline/synthesizer.py` — `_load_evidence()` 排序由 `.relevance_score.desc().nulls_last()` 替换为 `sa.case((... == None, 1), else_=0)` + `.relevance_score.desc()`，生成 MySQL/SQLite/PostgreSQL 通用 SQL
+  - `app/pipeline/evidence_graph.py` — `_load_evidence_items()` 同步替换相同排序逻辑
+  - `tests/unit/pipeline/test_evidence_graph.py` — 更新测试断言中的排序 SQL 以保持一致
+  - `app/tasks/research_task.py` — `_run_pipeline()` 在返回前增加 `session.refresh(task)`，避免 Orchestrator 通过 `update` 直接修改 DB 后返回 stale `task.status` 或触发懒加载异常
+- **修复 `research_sources.content` 实际为 MySQL `TEXT`（64KB）导致大正文写入 `DataError` 的级联故障**：
+  - `app/models/research_source.py` — `content` 字段类型由 `sa.Text` 修正为 `sqlalchemy.dialects.mysql.MEDIUMTEXT`，与 `DATABASE.md §2.4` 设计文档及 `report_sections.content` 保持一致（MySQL 16MB，足以容纳 Fetch 阶段 100KB 截断正文）
+  - `alembic/versions/f277d4d29190_research_sources_content_列改为_mediumtext.py` — 新增迁移脚本，将生产环境 `content` 列从 `TEXT` 升级为 `MEDIUMTEXT`
+  - `app/services/pipeline_orchestrator.py` — `_run_phase()` 提前缓存 `task_id`，避免 session 进入 `PendingRollbackError` 后在 `finally` 中访问 `self._task.id` 触发懒加载失败；`_handle_fatal_error()` 开头先执行 `session.rollback()`，确保中毒 session 能正常写入 `failed` 状态
+
+### Fixed
+- **修复 Search 阶段 `MissingGreenlet` 导致 Rerank 误报 `E3105`**：
+  - `app/pipeline/searcher.py` — `_get_sub_questions_from_planning` 改为异步 `_load_sub_questions`，显式查询 `research_steps` 表读取 Planning 输出，避免在 `AsyncSession` 中访问 `step.parent_step` relationship 触发 `MissingGreenlet`
+  - `app/services/pipeline_orchestrator.py` — `_handle_step_error` 对 Planning/Search/Rerank/Synthesis/EvidenceGraph/Render 等致命 Phase 的未知异常（非 `AppException`）按致命失败处理，不再降级继续，防止错误被延迟到后续阶段才暴露
+  - `tests/unit/pipeline/test_searcher.py` — 更新为 mock `session.execute` 返回 Planning Step
+  - `tests/unit/pipeline/test_integration.py` — 补充 `session.execute` mock，适配 Search 新的读取方式
+  - `tests/unit/services/test_pipeline_orchestrator.py` — `_make_task` 构造真实 steps 列表，避免 `task.steps` MagicMock 被 `_check_early_termination` 误判为空列表触发 Evidence Threshold
 
 ### Added
 - **Phase 3 §4.3 Evidence Graph Build 阶段实现（ROADMAP §4.3 / RESEARCH_PIPELINE §7）**——结构化认知资产组装：

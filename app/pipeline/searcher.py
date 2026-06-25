@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -171,8 +172,8 @@ async def run_search(
     task_id = str(task.id)
     root_step_id = str(step.id)
 
-    # 1. 读取 Planning 输出
-    sub_questions = _get_sub_questions_from_planning(step)
+    # 1. 读取 Planning 输出（显式查询，避免异步 relationship 懒加载）
+    sub_questions = await _load_sub_questions(session, task)
     if not sub_questions:
         logger.warning("Search: 无子问题输入，跳过: task_id=%s", task_id)
         return {
@@ -349,16 +350,32 @@ async def run_search(
 # ── 辅助函数 ──────────────────────────────────────────────────
 
 
-def _get_sub_questions_from_planning(step: ResearchStep) -> list[str]:
+async def _load_sub_questions(
+    session: AsyncSession,
+    task: ResearchTask,
+) -> list[str]:
     """从 Planning 阶段输出中提取 sub_questions。
 
-    查找路径：当前 step 的 parent_step（应为 planning 根 step）的 output。
+    显式查询 research_steps 表，避免在 AsyncSession 中依赖 relationship 懒加载
+    触发 MissingGreenlet。
     """
-    parent = step.parent_step
-    if parent and parent.output and isinstance(parent.output, dict):
-        sqs = parent.output.get("sub_questions", [])
+    stmt = (
+        select(ResearchStep)
+        .where(
+            ResearchStep.task_id == task.id,
+            ResearchStep.step_type == "planning",
+            ResearchStep.status == "completed",
+        )
+        .order_by(ResearchStep.completed_at)
+    )
+    result = await session.execute(stmt)
+    planning_step: ResearchStep | None = result.scalar_one_or_none()
+
+    if planning_step and planning_step.output and isinstance(planning_step.output, dict):
+        sqs = planning_step.output.get("sub_questions", [])
         if isinstance(sqs, list):
             return [str(sq) for sq in sqs if sq]
+
     return []
 
 

@@ -92,6 +92,17 @@ def _make_llm_result(content: str) -> LLMResult:
     )
 
 
+def _mock_session_with_planning(session: AsyncMock, planning_step: MagicMock) -> None:
+    """让 session.execute 在 Search 读取 Planning 输出时返回指定 step。
+
+    Search 阶段通过显式查询 research_steps 表获取 sub_questions，
+    不再依赖 ORM relationship 懒加载。
+    """
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = planning_step
+    session.execute.return_value = result_mock
+
+
 # ═══════════════════════════════════════════════════════════════
 # 集成测试
 # ═══════════════════════════════════════════════════════════════
@@ -121,6 +132,7 @@ class TestPlanningToSearchFlow:
         # Phase 2: Search — 使用 MagicMock 避免 ORM 关系触发
         search_step = _make_mock_step(step_type="search", id="step-search-001")
         search_step.parent_step = planning_step  # MagicMock 不会触发 ORM backref
+        _mock_session_with_planning(db, planning_step)
 
         with patch("app.pipeline.searcher._call_tavily") as mock_tavily:
             mock_tavily.side_effect = [
@@ -170,6 +182,7 @@ class TestSearchToFetchFlow:
         parent = _make_mock_step(step_type="planning", id="step-plan-src")
         parent.output = {"sub_questions": ["测试子问题"]}
         search_step.parent_step = parent
+        _mock_session_with_planning(db, parent)
 
         # Search 阶段
         with patch("app.pipeline.searcher._call_tavily") as mock_tavily:
@@ -208,6 +221,7 @@ class TestSearchToFetchFlow:
             "sub_questions": ["子问题A", "子问题B", "子问题C"],
         }
         search_step.parent_step = parent
+        _mock_session_with_planning(db, parent)
 
         with patch("app.pipeline.searcher._call_tavily") as mock_tavily:
             mock_tavily.side_effect = RuntimeError("Tavily API 完全不可用")
@@ -259,6 +273,7 @@ class TestPipelineSseEventSequence:
             "sub_questions": ["子问题A", "子问题B"],
         }
         search_step.parent_step = parent
+        _mock_session_with_planning(db, parent)
 
         with patch("app.pipeline.searcher._call_tavily") as mock_tavily:
             mock_tavily.side_effect = [

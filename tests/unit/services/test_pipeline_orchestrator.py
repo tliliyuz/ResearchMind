@@ -42,8 +42,10 @@ def _make_task(**kwargs) -> MagicMock:
     task.status = kwargs.get("status", "running")
     task.topic = kwargs.get("topic", "测试主题")
     task.current_phase = kwargs.get("current_phase", None)
-    task.total_steps = kwargs.get("total_steps", 7)
-    task.completed_steps = kwargs.get("completed_steps", 0)
+    total_steps = kwargs.get("total_steps", 7)
+    completed_steps = kwargs.get("completed_steps", 0)
+    task.total_steps = total_steps
+    task.completed_steps = completed_steps
     task.total_sources = kwargs.get("total_sources", 0)
     task.total_evidence = kwargs.get("total_evidence", 0)
     task.error_code = kwargs.get("error_code", None)
@@ -53,6 +55,17 @@ def _make_task(**kwargs) -> MagicMock:
     task.started_at = kwargs.get("started_at", datetime.now(timezone.utc))
     task.completed_at = kwargs.get("completed_at", None)
     task.execution_context = kwargs.get("execution_context", None)
+
+    # 构造 steps 列表，避免 _check_early_termination / _finalize_task 把 MagicMock
+    # 当成空列表导致误判（空列表会被视为全部终态并触发 Evidence Threshold 判定）。
+    steps = []
+    for i in range(total_steps):
+        step_mock = MagicMock(spec=ResearchStep)
+        step_mock.status = "completed" if i < completed_steps else "pending"
+        step_mock.error_code = None
+        step_mock.error_message = None
+        steps.append(step_mock)
+    task.steps = steps
     return task
 
 
