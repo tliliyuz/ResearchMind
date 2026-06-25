@@ -183,8 +183,18 @@ async def async_client(db_session: AsyncSession):
     from app.dependencies import get_current_user, get_db
 
     async def override_get_db():
-        # 复用测试会话 —— 不 commit，写入随测试事务回滚
-        yield db_session
+        # 复用测试会话 —— API 层的 commit 在测试中重定向为 flush，
+        # 避免提交外层事务导致跨测试数据污染。
+        original_commit = db_session.commit
+
+        async def _commit_to_flush():
+            await db_session.flush()
+
+        db_session.commit = _commit_to_flush
+        try:
+            yield db_session
+        finally:
+            db_session.commit = original_commit
 
     async def override_get_current_user(request: Request) -> dict:
         return {

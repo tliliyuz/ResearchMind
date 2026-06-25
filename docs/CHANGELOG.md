@@ -71,6 +71,13 @@
   - `app/pipeline/searcher.py` — Search Phase stub（~40 行）：`run_search()` 函数签名 + 返回 stub output（等待 §3.4 替换为 Tavily API 调用 + 去重 + 失败重试）
   - `app/pipeline/fetcher.py` — Fetch Phase stub（~40 行）：`run_fetch()` 函数签名 + 返回 stub output（等待 §3.5 替换为 HTTP GET + trafilatura 提取 + SSRF 防护）
 
+### Fixed
+- **修复测试间数据污染导致的批量失败**（CLAUDE.md 测试规范）：
+  - `tests/conftest.py` — `async_client` fixture 中将 `db_session.commit` 在测试环境下重定向为 `flush`，避免 API 层的显式 `commit()` 提交外层事务，确保每个测试函数结束后统一回滚，消除跨测试状态泄漏
+  - `tests/unit/api/test_research.py::TestListResearchAPI` — 列表 total 计数不再受前序测试残留数据影响
+  - `tests/unit/services/test_auth_service.py` — 消除 `users.username` UNIQUE 冲突（前序 API 测试 commit 残留导致）
+- **同步 `TestPlanningFailedException` 断言与文档**：`tests/unit/core/test_exceptions.py` 中 E3101 的 `recoverable` 改为 `False`，并移除对 `retry_after_ms` 的断言，对齐 [API.md §5.3](docs/API.md#53-研究执行错误e3xxx) / [RESEARCH_PIPELINE.md §2.7](docs/RESEARCH_PIPELINE.md#27-checkpoint)
+
 ### Changed
 - `app/services/research_service.py` — 移除 Celery 分发逻辑（commit+delay 移至 API 层），`create_task()` 仅做 flush，更新 docstring
 - `app/api/research.py` — 新增 `execute_research_task.delay()` 调用（`create_task()` 返回后、响应返回前），新增 Celery 导入

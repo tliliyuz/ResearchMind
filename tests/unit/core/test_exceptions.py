@@ -247,10 +247,10 @@ class TestPlanningFailedException:
         assert exc.error_code == "E3101"
         assert exc.status_code == 500
 
-    def test_recoverable为True且含retry_after_ms(self):
+    def test_recoverable为False且无retry_after_ms(self):
         exc = PlanningFailedException()
-        assert exc.error_detail["recoverable"] is True
-        assert exc.error_detail["retry_after_ms"] == 5000
+        assert exc.error_detail["recoverable"] is False
+        assert "retry_after_ms" not in exc.error_detail
 
 
 class TestSearchFailedException:
