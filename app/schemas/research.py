@@ -131,3 +131,51 @@ class ResearchCreateResponse(BaseModel):
     task_id: str = Field(..., description="任务 UUID")
     status: str = Field(..., description="初始状态，固定为 pending")
     created_at: datetime = Field(..., description="创建时间（ISO 8601 UTC）")
+
+
+# ── 报告相关 Schema（对齐 API.md §3.3）───────────────────────────
+
+
+class ReportSourceSchema(BaseModel):
+    """报告引用来源 — 来自 research_sources。"""
+
+    id: int = Field(..., description="来源 ID")
+    url: str = Field(..., description="来源 URL")
+    title: str = Field(..., description="来源标题")
+    domain: str = Field(..., description="来源域名")
+
+
+class ReportSectionSourceSchema(BaseModel):
+    """章节引用的证据来源映射。"""
+
+    id: int = Field(..., description="research_sources.id")
+    evidence_index: int = Field(..., description="Evidence Graph 中的 0-based index")
+
+
+class ReportSectionSchema(BaseModel):
+    """报告章节。"""
+
+    heading: str = Field(..., description="章节标题")
+    content: str = Field(..., description="Markdown 正文")
+    sources: list[ReportSectionSourceSchema] = Field(
+        default_factory=list, description="本章引用的证据来源列表"
+    )
+
+
+class ReportSchema(BaseModel):
+    """完整研究报告。"""
+
+    title: str = Field(..., description="报告标题，即研究主题")
+    generated_at: datetime = Field(..., description="报告生成时间（ISO 8601 UTC）")
+    sections: list[ReportSectionSchema] = Field(..., description="章节列表")
+    sources: list[ReportSourceSchema] = Field(..., description="报告涉及来源列表")
+
+
+class ResearchReportResponse(BaseModel):
+    """GET /api/research/{task_id}/report 响应 — 对齐 API.md §3.3。"""
+
+    task_id: str = Field(..., description="任务 UUID")
+    status: str = Field(..., description="任务状态")
+    report: ReportSchema = Field(..., description="结构化报告")
+    evidence_graph: dict = Field(..., description="Evidence Graph 数据")
+    trace: dict | None = Field(None, description="Pipeline Trace 数据")

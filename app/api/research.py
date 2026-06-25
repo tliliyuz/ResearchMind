@@ -21,6 +21,7 @@ from app.schemas.research import ResearchCreateRequest
 from app.services.research_service import (
     create_task,
     delete_task,
+    get_report,
     get_task_detail,
     get_task_list,
 )
@@ -148,6 +149,20 @@ async def get_research_task_state(
     """
     snapshot = await _build_snapshot(task, db)
     return {"code": "0", "message": "ok", "data": snapshot}
+
+
+@router.get("/{task_id}/report")
+async def get_research_task_report(
+    task: ResearchTask = Depends(require_task_accessible),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取完整研究报告（含 Evidence Graph 与 Trace）。
+
+    对齐 API.md §3.3 GET /api/research/{task_id}/report。
+    仅 completed / partially_completed 任务可获取。
+    """
+    result = await get_report(db, task)
+    return {"code": "0", "message": "ok", "data": result.model_dump()}
 
 
 # ── 辅助函数 ──────────────────────────────────────────────

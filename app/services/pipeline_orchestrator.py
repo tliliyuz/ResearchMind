@@ -89,6 +89,12 @@ STEP_TYPE_TO_PHASE: dict[str, str] = {
     "render": "rendering",
 }
 
+# 致命 Phase：这些阶段一旦发生非 AppException 的未知异常，不应降级继续，
+# 必须终止 Pipeline，避免错误被延迟到后续阶段才暴露。
+FATAL_STEP_TYPES: frozenset[str] = frozenset({
+    "planning", "search", "rerank", "synthesis", "evidence_graph", "render"
+})
+
 
 # ═════════════════════════════════════════════════════════════
 # Pipeline Orchestrator
@@ -232,6 +238,7 @@ class PipelineOrchestrator:
             step_type: Phase 类型（planning / search / ... / render）
         """
         phase_name = STEP_TYPE_TO_PHASE.get(step_type, step_type)
+        task_id = str(self._task.id)  # 提前缓存，避免异常后 session 中毒时触发懒加载
 
         # 1. 创建 Step
         step = await self._create_step(step_type)
@@ -249,13 +256,13 @@ class PipelineOrchestrator:
 
         # 2. 幂等锁检查
         locked = await acquire_step_lock_async(
-            str(self._task.id), step_type,
+            task_id, step_type,
             ttl=settings.CELERY_IDEMPOTENCY_LOCK_TTL,
         )
         if not locked:
             logger.warning(
                 "Step 幂等锁已被占用，跳过: task_id=%s, step_type=%s",
-                self._task.id, step_type,
+                task_id, step_type,
             )
             step.status = "skipped"
             step.output = {"reason": "幂等锁已被占用（可能重复入队）"}
@@ -283,7 +290,7 @@ class PipelineOrchestrator:
             await self._handle_step_error(step, phase_name, e)
         finally:
             # 7. 释放幂等锁
-            await release_step_lock_async(str(self._task.id), step_type)
+            await release_step_lock_async(task_id, step_type)
 
     # ── 工具方法 ──────────────────────────────────────────────
 
@@ -422,6 +429,17 @@ class PipelineOrchestrator:
             "saved_at": now.isoformat(),
         })
 
+        # Render 阶段 Trace 埋点
+        if step.step_type == "render" and isinstance(output, dict):
+            self._trace.record_render(
+                duration_ms=duration_ms or 0,
+                input_tokens=output.get("prompt_tokens", 0),
+                output_tokens=output.get("completion_tokens", 0),
+                sections_count=output.get("sections_count", 0),
+                citations_count=output.get("citations_count", 0),
+                retries=output.get("retry_count", 0),
+            )
+
         # 检查是否需要提前终止（当前阶段 fatal 等）
         await self._check_early_termination()
 
@@ -496,9 +514,17 @@ class PipelineOrchestrator:
             "error_type": error.__class__.__name__,
         })
 
-        # 判断是否致命：检查 error_code 是否在 FATAL 集合中
-        if error_code and error_code in FATAL_STEP_ERROR_CODES:
-            recoverable = _extract_recoverable(error)
+        # 判断是否致命
+        is_known_fatal = error_code and error_code in FATAL_STEP_ERROR_CODES
+        is_unknown_fatal = (not error_code) and step.step_type in FATAL_STEP_TYPES
+
+        if is_known_fatal or is_unknown_fatal:
+            # 未知异常在致命 Phase 中 → 使用通用致命错误码
+            if is_unknown_fatal:
+                error_code = "E3999"
+                step.error_code = error_code
+
+            recoverable = _extract_recoverable(error) if is_known_fatal else False
             payload = self._build_task_failed_payload(
                 error_type=error.__class__.__name__,
                 error_description=error_msg,
@@ -691,6 +717,10 @@ class PipelineOrchestrator:
     async def _handle_fatal_error(self, error: Exception) -> None:
         """处理未捕获的致命错误：CAS 更新 task status 为 failed。"""
         try:
+            # 若之前的数据库异常导致 session 进入 rollback-only（如 DataError），
+            # 先回滚使 session 恢复可用，否则后续访问 self._task.id 都会触发 PendingRollbackError。
+            await self._session.rollback()
+
             now = datetime.now(timezone.utc)
             error_code = getattr(error, "error_code", None) or "E3999"
             error_msg = str(error)
@@ -784,6 +814,10 @@ def build_default_phase_handlers() -> dict[str, PhaseFunc]:
     except ImportError:
         logger.warning("evidence_graph.py 未找到，evidence_graph 阶段将跳过")
 
-    # render 未注册 → Orchestrator 自动 skip
+    try:
+        from app.pipeline.renderer import run_render
+        handlers["render"] = run_render
+    except ImportError:
+        logger.warning("renderer.py 未找到，render 阶段将跳过")
 
     return handlers

@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,6 +37,7 @@ class GraphItem:
 
     def __init__(self, index: int, evidence_item: EvidenceItem):
         self.index = index
+        self.evidence_item_id = evidence_item.id
         self.source_id = evidence_item.source_id
         self.source_url = ""
         self.source_title = ""
@@ -55,6 +57,7 @@ class GraphItem:
     def to_dict(self) -> dict:
         return {
             "index": self.index,
+            "evidence_item_id": self.evidence_item_id,
             "source_id": self.source_id,
             "source_url": self.source_url,
             "source_title": self.source_title,
@@ -159,7 +162,10 @@ async def _load_evidence_items(
         select(EvidenceItem)
         .where(EvidenceItem.task_id == task.id)
         .options(selectinload(EvidenceItem.source))
-        .order_by(EvidenceItem.relevance_score.desc().nulls_last())
+        .order_by(
+            sa.case((EvidenceItem.relevance_score == None, 1), else_=0),
+            EvidenceItem.relevance_score.desc(),
+        )
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())

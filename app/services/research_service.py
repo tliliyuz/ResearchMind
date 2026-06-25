@@ -1,10 +1,11 @@
-"""研究任务业务逻辑 — 创建 / 列表 / 详情 / 删除
+"""研究任务业务逻辑 — 创建 / 列表 / 详情 / 删除 / 报告获取
 
-对齐 API.md §3.1：
+对齐 API.md §3.1 / §3.3：
 - create_task()：校验 → 写入 research_tasks + 首个 research_step → commit → Celery 分发
 - get_task_list()：当前用户任务分页列表，按 created_at DESC
 - get_task_detail()：单任务状态 + progress 快照
 - delete_task()：FK CASCADE 级联清理全部派生数据
+- get_report()：获取完整研究报告（含 Evidence Graph 与 Trace）
 """
 
 import logging
@@ -23,17 +24,25 @@ from app.core.exceptions import (
     InvalidDepthException,
     InvalidRequirementsException,
 )
+from app.models.evidence_item import EvidenceItem
+from app.models.report_section import ReportSection
 from app.models.research_task import ResearchTask
 from app.models.research_step import ResearchStep
+from app.models.section_evidence import SectionEvidence
 from app.schemas.research import (
+    ProgressSchema,
+    ReportSchema,
+    ReportSectionSchema,
+    ReportSectionSourceSchema,
+    ReportSourceSchema,
     ResearchCreateRequest,
     ResearchCreateResponse,
-    ResearchTaskResponse,
+    ResearchReportResponse,
     ResearchTaskListItem,
     ResearchTaskListResponse,
-    ProgressSchema,
-    VALID_TASK_TYPES,
+    ResearchTaskResponse,
     VALID_DEPTHS,
+    VALID_TASK_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +232,134 @@ async def get_task_detail(
         created_at=task.created_at,
         started_at=task.started_at,
         completed_at=task.completed_at,
+    )
+
+
+async def get_report(
+    db: AsyncSession,
+    task: ResearchTask,
+) -> ResearchReportResponse:
+    """获取完整研究报告（含 Evidence Graph 与 Trace）。
+
+    调用方需先通过 require_task_accessible 校验权限并获取 task 对象。
+    对齐 API.md §3.3 GET /api/research/{task_id}/report。
+    """
+    if task.status not in {"completed", "partially_completed"}:
+        raise TaskStatusConflictException(detail="任务尚未完成，无法获取报告")
+
+    # 读取最新完成的 Evidence Graph Step 的 output["graph"]
+    stmt = (
+        select(ResearchStep)
+        .where(
+            ResearchStep.task_id == task.id,
+            ResearchStep.step_type == "evidence_graph",
+            ResearchStep.status == "completed",
+        )
+        .order_by(ResearchStep.completed_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    eg_step: ResearchStep | None = result.scalar_one_or_none()
+
+    if eg_step is None or not isinstance(eg_step.output, dict):
+        raise TaskStatusConflictException(detail="报告尚未生成")
+
+    evidence_graph = eg_step.output.get("graph") or {}
+
+    # 构建 evidence_item.id -> evidence_index 映射
+    items = evidence_graph.get("items") or []
+    evidence_id_to_index: dict[int, int] = {}
+    for item in items:
+        if isinstance(item, dict) and "evidence_item_id" in item and "index" in item:
+            evidence_id_to_index[item["evidence_item_id"]] = item["index"]
+
+    # 组装章节（显式查询，避免 lazy load）
+    stmt = (
+        select(ReportSection)
+        .where(ReportSection.task_id == task.id)
+        .order_by(ReportSection.sort_order)
+    )
+    result = await db.execute(stmt)
+    sorted_sections = list(result.scalars().all())
+
+    section_ids = [s.id for s in sorted_sections]
+    section_evidence_map: dict[int, list[int]] = {sid: [] for sid in section_ids}
+    if section_ids:
+        stmt = (
+            select(SectionEvidence.section_id, SectionEvidence.evidence_id)
+            .where(SectionEvidence.section_id.in_(section_ids))
+        )
+        result = await db.execute(stmt)
+        for section_id, evidence_id in result.all():
+            section_evidence_map.setdefault(section_id, []).append(evidence_id)
+
+    # 预加载 evidence_items.source_id（用于生成 sources.id）
+    evidence_ids = []
+    for ids in section_evidence_map.values():
+        evidence_ids.extend(ids)
+    evidence_source_ids: dict[int, int] = {}
+    if evidence_ids:
+        stmt = select(EvidenceItem.id, EvidenceItem.source_id).where(EvidenceItem.id.in_(evidence_ids))
+        result = await db.execute(stmt)
+        for eid, source_id in result.all():
+            evidence_source_ids[eid] = source_id
+
+    report_sections: list[ReportSectionSchema] = []
+    for section in sorted_sections:
+        section_sources: list[ReportSectionSourceSchema] = []
+        seen_indices: set[int] = set()
+        for evidence_id in section_evidence_map.get(section.id, []):
+            idx = evidence_id_to_index.get(evidence_id)
+            if idx is None or idx in seen_indices:
+                continue
+            seen_indices.add(idx)
+            section_sources.append(ReportSectionSourceSchema(
+                id=evidence_source_ids.get(evidence_id, 0),
+                evidence_index=idx,
+            ))
+        section_sources.sort(key=lambda x: x.evidence_index)
+        report_sections.append(ReportSectionSchema(
+            heading=section.heading,
+            content=section.content,
+            sources=section_sources,
+        ))
+
+    # 组装报告来源
+    report_sources: list[ReportSourceSchema] = []
+    for src in evidence_graph.get("sources") or []:
+        if not isinstance(src, dict):
+            continue
+        report_sources.append(ReportSourceSchema(
+            id=src.get("id") or 0,
+            url=src.get("url") or "",
+            title=src.get("title") or "",
+            domain=src.get("domain") or "",
+        ))
+
+    # 报告生成时间
+    generated_at = eg_step.completed_at
+    graph_generated_at = evidence_graph.get("generated_at")
+    if graph_generated_at:
+        try:
+            generated_at = datetime.fromisoformat(graph_generated_at)
+        except (ValueError, TypeError):
+            pass
+    if generated_at is None:
+        generated_at = datetime.now(timezone.utc)
+
+    report = ReportSchema(
+        title=task.topic,
+        generated_at=generated_at,
+        sections=report_sections,
+        sources=report_sources,
+    )
+
+    return ResearchReportResponse(
+        task_id=task.id,
+        status=task.status,
+        report=report,
+        evidence_graph=evidence_graph,
+        trace=task.trace,
     )
 
 
