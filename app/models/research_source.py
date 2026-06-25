@@ -50,6 +50,12 @@ class ResearchSource(Base):
         default=None,
         server_default=sa.text("NULL"),
     )
+    content: Mapped[str | None] = mapped_column(
+        sa.Text,
+        default=None,
+        server_default=sa.text("NULL"),
+        comment="网页 Markdown 正文；fetch_status='success' 时写入",
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime,

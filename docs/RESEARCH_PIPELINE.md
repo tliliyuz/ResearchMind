@@ -319,7 +319,7 @@ FetchedDoc = {
     "url": str,
     "title": str,
     "domain": str,              # 提取的域名（用于来源展示）
-    "content": str,             # trafilatura 提取的 Markdown 正文（截断后）
+    "content": str,             # trafilatura 提取的 Markdown 正文（截断后） # 持久化到 research_sources.content，供 Rerank 阶段读取
     "content_length": int,      # 原始正文长度
     "fetched_at": datetime,
     "fetch_status": str,        # "success" / "timeout" / "blocked" / "empty" / "dns_error"
@@ -381,6 +381,18 @@ Evidence[] (top-K, K = min(max_sources, 候选数))
 
 > **实现模块**：
 > - `app/pipeline/reranker.py`（待改造）：`BaseReranker` ABC 抽象基类 + Claude Rerank 实现。ABC 定义 `rerank(query, candidates, top_k)` 方法签名。v1.0 使用 LLM Rerank（Claude API Prompt 内打分），v1.5 可替换为专用 Rerank API 实现。来源：DocMind `backend/app/rag/reranker.py` 的 ABC 模式。
+
+### 5.2a 数据来源
+
+Rerank 阶段不依赖 Fetch step 的 `output` JSON 传递正文（避免单条 JSON 过大）。启动时直接从 `research_sources` 表读取：
+
+```sql
+SELECT id, url, title, domain, content
+FROM research_sources
+WHERE task_id = ? AND fetch_status = 'success';
+```
+
+每行映射为一个 `FetchedDoc`，其中 `id` 对应 `source_id`，用于后续 Evidence Graph 的 `[来源N]` 引用。该设计保证 Retry 时正文可复用，且断点续跑无需重新抓取。
 > - `app/pipeline/fusion.py`：RRF 多路融合排序（`rrf_fusion()`），v1.5 引入 SearXNG 作为降级后端后用于 Tavily + SearXNG 双路结果融合。算法 `score = Σ 1/(60 + rank_i)`。**v1.0 代码已就位，不激活**。来源：DocMind `backend/app/rag/fusion.py`，适配 ResearchMind 自有 SearchResult/SearchOutput 类型。
 
 ### 5.3 Stage 1：BM25 粗筛

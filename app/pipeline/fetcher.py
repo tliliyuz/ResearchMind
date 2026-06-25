@@ -302,6 +302,7 @@ async def run_fetch(
                 fetch_result.get("content", ""), url,
             )[:500]
             source.domain = _extract_domain(url)[:255]
+            source.content = fetch_result["content"]
             successful += 1
 
             # 子 step → completed

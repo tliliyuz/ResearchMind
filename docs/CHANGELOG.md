@@ -18,6 +18,15 @@
 > Phase 2 §3.9 测试完成：Celery 幂等锁 + 5 个前端测试全绿，Phase 2 全部关闭准入 Phase 3（ROADMAP §3.9 ✅）。
 
 ### Added
+- **`research_sources` 表新增 `content` 列，Fetcher 持久化正文供 Rerank 复用**：
+  - `app/models/research_source.py` — 新增 `content` 字段（`sa.Text`，nullable，server_default `NULL`），写入 trafilatura 提取的 Markdown 正文
+  - `alembic/versions/39b5ffae3624_research_sources_新增_content_列.py` — 新增迁移脚本，为 `research_sources` 表添加 `content` 列
+  - `app/pipeline/fetcher.py` — `run_fetch()` 成功分支将 `_fetch_one_url()` 返回的 `content` 写入 `ResearchSource.content`；失败/跳过分支保持 `NULL`
+  - `docs/DATABASE.md` §2.4 — 更新 `research_sources` DDL 与字段说明表，新增 `content MEDIUMTEXT` 定义
+  - `docs/RESEARCH_PIPELINE.md` — 更新 `FetchedDoc` 定义（标注 content 持久化到 `research_sources.content`），新增 §5.2a 说明 Rerank 从表读取正文
+  - `tests/unit/pipeline/test_fetcher.py` — 新增 content 写入断言（成功写入 / 失败保持 NULL / 超长正文写入）
+
+### Added
 - **Phase 2 §3.9 测试完成（ROADMAP §3.9）**——6 个新测试文件 + 105 个新测试用例：
   - `tests/unit/tasks/test_lock.py` — Celery 幂等锁单元测试（19 用例：Key 格式验证 / SET NX 获取成功+拒绝 / 自定义 TTL / 不同 step_type·task_id Key 隔离 / 七阶段全类型 / 释放锁+重复释放 / check_step_lock 存在+不存在 / 完整生命周期 / 并发拒绝 / 异步版 acquire+release+自定义 TTL）。Mock Redis 客户端在函数边界截断
   - `frontend/tests/unit/sse.test.js` — SSE 解析工具单元测试（18 用例：单行 event+data 解析 / 注释帧跳过 / 纯注释帧过滤 / 多行 data 拼接 / 跨 chunk buffer 保留 / JSON 解析失败容错+onError / event/data 无空格前缀兼容 / 空帧跳过 / 14 种事件类型全量遍历 / 连接状态机 connecting→connected / close→disconnected / 无 token→无 Authorization 头 / 有 token→Bearer 携带 / HTTP 500→reconnecting / close 阻止重连 / 重试耗尽→error / 重连成功后恢复 connected）。Mock fetch + ReadableStream（悬空流模式避免递归重连）

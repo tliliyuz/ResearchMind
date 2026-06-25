@@ -151,6 +151,7 @@ def _make_mock_sources(count: int = 3) -> list[MagicMock]:
         src.id = 100 + i
         src.url = urls[i]
         src.fetch_status = None
+        src.content = None
         sources.append(src)
     return sources
 
@@ -207,6 +208,8 @@ class TestRunFetchSuccess:
             assert output["successful"] == 2
             assert output["failed"] == 0
             assert self.task.total_sources == 2
+            assert mock_sources[0].content == "# Test Article\n\nThis is the content of the test article."
+            assert mock_sources[1].content == "# Test Article\n\nThis is the content of the test article."
 
     @pytest.mark.asyncio
     async def test_无待抓取URL_提前返回(self):
@@ -241,6 +244,31 @@ class TestRunFetchSuccess:
             assert "step.started" in event_types
             assert "step.completed" in event_types
 
+    @pytest.mark.asyncio
+    async def test_超长正文_写入截断后内容(self):
+        mock_sources = _make_mock_sources(1)
+        self.db_session.execute = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_sources
+        self.db_session.execute.return_value = mock_result
+
+        long_content = "x" * 102400
+        with patch("app.pipeline.fetcher._fetch_one_url") as mock_fetch:
+            mock_fetch.return_value = {
+                "status": "success",
+                "content": long_content,
+                "content_length": 200000,
+                "error": None,
+            }
+
+            output = await run_fetch(
+                self.task, self.step, self.db_session, self.sse_bridge,
+            )
+
+            assert output["successful"] == 1
+            assert len(mock_sources[0].content) == 102400
+            assert mock_sources[0].content == long_content
+
 
 class TestRunFetchFailure:
     """失败策略：超时重试 / 403不重试 / DNS失败 / SSRF拦截。"""
@@ -268,6 +296,7 @@ class TestRunFetchFailure:
 
             assert output["successful"] == 0
             assert output["failed"] == 1
+            assert mock_sources[0].content is None
 
     @pytest.mark.asyncio
     async def test_HTTP403_不重试_直接SKIPPED(self):
@@ -285,6 +314,7 @@ class TestRunFetchFailure:
 
             assert output["successful"] == 0
             assert output["failed"] == 1
+            assert mock_sources[0].content is None
 
     @pytest.mark.asyncio
     async def test_SSRF拦截_内网URL_跳过(self):
@@ -293,6 +323,7 @@ class TestRunFetchFailure:
         src.id = 999
         src.url = "http://127.0.0.1:8080/admin"
         src.fetch_status = None
+        src.content = None
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [src]
@@ -304,6 +335,7 @@ class TestRunFetchFailure:
 
         assert output["failed"] == 0
         assert output["skipped_safety"] == 1  # 安全拦截计数
+        assert src.content is None
 
     @pytest.mark.asyncio
     async def test_正文为空_SKIPPED(self):
@@ -326,6 +358,7 @@ class TestRunFetchFailure:
 
             assert output["successful"] == 0
             assert output["failed"] == 1
+            assert mock_sources[0].content is None
 
     @pytest.mark.asyncio
     async def test_DNS失败_SKIPPED(self):
@@ -348,3 +381,4 @@ class TestRunFetchFailure:
 
             assert output["successful"] == 0
             assert output["failed"] == 1
+            assert mock_sources[0].content is None

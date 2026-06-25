@@ -242,6 +242,7 @@ CREATE TABLE research_sources (
     domain          VARCHAR(255) DEFAULT NULL,
     fetched_at      DATETIME DEFAULT NULL,
     fetch_status    ENUM('success','timeout','blocked','empty') DEFAULT NULL,
+    content         MEDIUMTEXT DEFAULT NULL COMMENT '网页 Markdown 正文，fetch_status=success 时写入',
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
     FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
@@ -259,6 +260,7 @@ CREATE TABLE research_sources (
 | domain | VARCHAR(255) | 域名 |
 | fetched_at | DATETIME | 抓取时间（UTC） |
 | fetch_status | ENUM | 抓取状态：success / timeout / blocked / empty |
+| content | MEDIUMTEXT | 网页 Markdown 正文；fetch_status='success' 时写入 |
 | updated_at | DATETIME | 最后修改时间（UTC） |
 
 ### 2.5 证据条目表 `evidence_items`
