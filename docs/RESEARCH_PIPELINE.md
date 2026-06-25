@@ -607,7 +607,7 @@ EvidenceGraph = {
             "source_title": str,
             "domain": str,
             "content": str,                  # 证据原文 segment
-            "relevance_score": float,        # LLM Rerank 评分 (0-10)
+            "relevance_score": float,        # LLM Rerank 评分 (0-1) [Deviation] 原文档写 0-10，实际 Rerank 归一化为 0-1
             "cluster_theme": str,            # 所属 Synthesis 聚类主题
             "consensus_level": str,          # strong / moderate / weak
             "used_in_sections": [str],       # 被哪些 report_section 引用（Report Render 阶段填充）

@@ -16,7 +16,16 @@
 > Phase 2.3.3-§3.6 Pipeline 前半段完成：Planning（LLM）+ Search（Tavily）+ Fetch（HTTP+trafilatura）+ SSE 端点（ROADMAP §3.3-§3.6 ✅）。
 > Phase 2 §3.7 前端实现完成：ResearchPage + HistoryPage + Sidebar 历史任务 + SSE 框架（ROADMAP §3.7 ✅）。
 > Phase 2 §3.9 测试完成：Celery 幂等锁 + 5 个前端测试全绿，Phase 2 全部关闭准入 Phase 3（ROADMAP §3.9 ✅）。
-> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅。
+> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅。
+
+### Added
+- **Phase 3 §4.3 Evidence Graph Build 阶段实现（ROADMAP §4.3 / RESEARCH_PIPELINE §7）**——结构化认知资产组装：
+  - `app/pipeline/evidence_graph.py` — Evidence Graph Build 阶段完整实现（~240 行）：`GraphItem`/`GraphCluster` 内存类型定义；从 `task.requirements` 读取 `max_sources`；读取最新 completed Synthesis Step 的 `output` 并校验 `clusters`；从 `evidence_items` 表读取 Evidence（`selectinload(EvidenceItem.source)`），按 `relevance_score` 降序取前 `max_sources` 条；为每条 Evidence 重新分配 0-based `index`；将 Synthesis cluster 的 `supporting_evidence_indices` 写回对应 item 的 `cluster_theme`/`consensus_level`（`conflicting_evidence_indices` 作为未被 supporting 覆盖时的 fallback）；生成 `graph.clusters`（`evidence_indices` 为去重排序后的 supporting+conflicting 合并列表）；透传 `conflicts`/`knowledge_gaps`；按 `source_id` 聚合 `sources[]` 并统计 `evidence_count`；`used_in_sections` 初始为空数组；输出 SSE `step.progress`(item_count/cluster_count/source_count)；返回完整 `graph` + 计数摘要 + `duration_ms`
+  - `app/services/pipeline_orchestrator.py` — `build_default_phase_handlers()` 注册 `evidence_graph` handler，import `app.pipeline.evidence_graph.run_evidence_graph`
+  - `tests/unit/pipeline/test_evidence_graph.py` — Evidence Graph Build 单元测试（14 用例：正常构建完整 graph + SSE / items 按 relevance_score 降序并重新分配 index / cluster 信息写回 items / conflicting indices fallback 写回 / sources 聚合 evidence_count / used_in_sections 初始为空数组 / knowledge_gaps 和 conflicts 透传 / max_sources 截断 / 缺少 Evidence→E3106 / 缺少 Synthesis output→E3106 / cluster 越界索引过滤 / conflict 越界索引过滤 / Graph index 与 EvidenceItem.id 不同 / source 字段为空时 source_id 保留）
+
+### Fixed
+- **修正 `docs/RESEARCH_PIPELINE.md` §7.3 `relevance_score` 范围描述**：由 `(0-10)` 修正为 `(0-1)` 并标注 `[Deviation]`，与实际 Rerank 归一化存储及 API.md 报告示例保持一致
 
 ### Added
 - **Phase 3 §4.2 Synthesis 阶段实现（ROADMAP §4.2 / RESEARCH_PIPELINE §6）**——跨源综合：

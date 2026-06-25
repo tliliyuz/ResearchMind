@@ -778,6 +778,12 @@ def build_default_phase_handlers() -> dict[str, PhaseFunc]:
     except ImportError:
         logger.warning("synthesizer.py 未找到，synthesis 阶段将跳过")
 
-    # evidence_graph / render 未注册 → Orchestrator 自动 skip
+    try:
+        from app.pipeline.evidence_graph import run_evidence_graph
+        handlers["evidence_graph"] = run_evidence_graph
+    except ImportError:
+        logger.warning("evidence_graph.py 未找到，evidence_graph 阶段将跳过")
+
+    # render 未注册 → Orchestrator 自动 skip
 
     return handlers

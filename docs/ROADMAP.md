@@ -38,7 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
-> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ⏳ | §4.4 Report Render ⏳ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
+> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ⏳ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -302,9 +302,9 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ⏳ | Evidence Graph Builder | `app/pipeline/evidence_graph.py` — 纯程序化步骤（不调用 LLM）：导入 Evidence[] → 导入 SynthesisNotes.clusters → 写回 items[].cluster_theme + consensus_level → 导入 conflicts → 导入 knowledge_gaps → 聚合 sources[] → 按 relevance_score 降序重排 items[] | 决策 #24 |
-| ⏳ | Evidence Graph 持久化 | 写入 `evidence_items` 表（`INSERT` only，幂等追加）+ `research_sources` 表 + 写回 `items[].used_in_sections`（Report Render 阶段填充） | — |
-| ⏳ | Evidence Graph 失败策略 | 纯数据组装→失败说明上游数据结构问题→E3106 (`recoverable=false`) | — |
+| ✅ | Evidence Graph Builder | `app/pipeline/evidence_graph.py` — 纯程序化步骤（不调用 LLM）：导入 Evidence[] → 导入 SynthesisNotes.clusters → 写回 items[].cluster_theme + consensus_level → 导入 conflicts → 导入 knowledge_gaps → 聚合 sources[] → 按 relevance_score 降序重排 items[] | 决策 #24 |
+| ✅ | Evidence Graph 持久化 | 写入 `research_steps.output`（`step_type='evidence_graph'`），Render 阶段直接读取；`items[].used_in_sections` 由 Report Render 阶段填充 | — |
+| ✅ | Evidence Graph 失败策略 | 纯数据组装→失败说明上游数据结构问题→E3106 (`recoverable=false`) | — |
 
 > **Evidence Graph 数据模型**：[RESEARCH_PIPELINE.md §7.3](RESEARCH_PIPELINE.md#73-数据模型)。
 
