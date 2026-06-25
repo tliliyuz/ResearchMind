@@ -27,6 +27,12 @@
   - `tests/unit/pipeline/test_fetcher.py` — 新增 content 写入断言（成功写入 / 失败保持 NULL / 超长正文写入）
 
 ### Added
+- **Phase 3 §4.1 Rerank 阶段实现（ROADMAP §4.1 / RESEARCH_PIPELINE §5）**——二段式证据粗筛精排：
+  - `app/pipeline/reranker.py` — Rerank 阶段完整实现（~430 行）：`FetchedDoc`/`Candidate`/`Evidence` 内存类型定义；从 `research_sources` 读取成功抓取的 `content`，从 planning step output 读取 `sub_questions`；BM25 粗筛（`app.pipeline.bm25.segment_document` 按 `\n\n` 分段 ≤2000 字符 + `bm25_rerank` 对每个 sub_question 评分，每文档取 top-3 segments，最多 45 候选）；LLM 精排（DeepSeek `LLM_FLASH_MODEL`，`deep_thinking=False`，`temperature=0.3`，四维评分 Prompt：相关性 40% / 信息量 30% / 权威性 15% / task_type 维度 15%）；输出 `Evidence[]` 按 `relevance_score` 降序取 `top-K = min(max_sources, 候选数)`；写入 `evidence_items` 表（INSERT only，幂等追加）；失败策略：BM25 候选为空 / 无成功 fetch 文档 / 缺少 sub_questions → E3105；LLM 失败或无效 JSON 重试 2 次后仍失败 → E3105；Evidence < 3 仅触发 `task.warning` 不阻断
+  - `app/services/pipeline_orchestrator.py` — `build_default_phase_handlers()` 注册 `rerank` handler，import `app.pipeline.reranker.run_rerank`
+  - `tests/unit/pipeline/test_reranker.py` — Rerank 单元测试（9 用例：正常流程 Evidence 持久化 + output 字段 / 3 种 task_type Prompt 维度注入 / Evidence<3 仅 warning / 无成功 fetch 文档→E3105 / 缺少 sub_questions→E3105 / LLM 无效 JSON 重试耗尽→E3105 / LLM 调用异常重试耗尽→E3105 / Evidence 按 relevance_score 降序 / score 0-10 归一化为 0-1）
+
+### Added
 - **Phase 2 §3.9 测试完成（ROADMAP §3.9）**——6 个新测试文件 + 105 个新测试用例：
   - `tests/unit/tasks/test_lock.py` — Celery 幂等锁单元测试（19 用例：Key 格式验证 / SET NX 获取成功+拒绝 / 自定义 TTL / 不同 step_type·task_id Key 隔离 / 七阶段全类型 / 释放锁+重复释放 / check_step_lock 存在+不存在 / 完整生命周期 / 并发拒绝 / 异步版 acquire+release+自定义 TTL）。Mock Redis 客户端在函数边界截断
   - `frontend/tests/unit/sse.test.js` — SSE 解析工具单元测试（18 用例：单行 event+data 解析 / 注释帧跳过 / 纯注释帧过滤 / 多行 data 拼接 / 跨 chunk buffer 保留 / JSON 解析失败容错+onError / event/data 无空格前缀兼容 / 空帧跳过 / 14 种事件类型全量遍历 / 连接状态机 connecting→connected / close→disconnected / 无 token→无 Authorization 头 / 有 token→Bearer 携带 / HTTP 500→reconnecting / close 阻止重连 / 重试耗尽→error / 重连成功后恢复 connected）。Mock fetch + ReadableStream（悬空流模式避免递归重连）

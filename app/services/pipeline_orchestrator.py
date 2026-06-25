@@ -719,6 +719,12 @@ def build_default_phase_handlers() -> dict[str, PhaseFunc]:
         logger.warning("fetcher.py 未找到，fetch 阶段将跳过")
 
     # Phase 3（rerank / synthesis / evidence_graph / render）
-    # 未注册 → Orchestrator 自动 skip
+    try:
+        from app.pipeline.reranker import run_rerank
+        handlers["rerank"] = run_rerank
+    except ImportError:
+        logger.warning("reranker.py 未找到，rerank 阶段将跳过")
+
+    # synthesis / evidence_graph / render 未注册 → Orchestrator 自动 skip
 
     return handlers

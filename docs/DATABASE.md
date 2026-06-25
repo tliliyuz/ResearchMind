@@ -241,7 +241,7 @@ CREATE TABLE research_sources (
     title           VARCHAR(500) DEFAULT NULL,
     domain          VARCHAR(255) DEFAULT NULL,
     fetched_at      DATETIME DEFAULT NULL,
-    fetch_status    ENUM('success','timeout','blocked','empty') DEFAULT NULL,
+    fetch_status    ENUM('success','timeout','blocked','empty','dns_error') DEFAULT NULL,
     content         MEDIUMTEXT DEFAULT NULL COMMENT '网页 Markdown 正文，fetch_status=success 时写入',
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- ORM onupdate 维护
 
@@ -259,7 +259,7 @@ CREATE TABLE research_sources (
 | title | VARCHAR(500) | 网页标题 |
 | domain | VARCHAR(255) | 域名 |
 | fetched_at | DATETIME | 抓取时间（UTC） |
-| fetch_status | ENUM | 抓取状态：success / timeout / blocked / empty |
+| fetch_status | ENUM | 抓取状态：success / timeout / blocked / empty / dns_error |
 | content | MEDIUMTEXT | 网页 Markdown 正文；fetch_status='success' 时写入 |
 | updated_at | DATETIME | 最后修改时间（UTC） |
 

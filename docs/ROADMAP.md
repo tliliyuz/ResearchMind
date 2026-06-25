@@ -38,6 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
+> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ⏳ | §4.3 Evidence Graph Build ⏳ | §4.4 Report Render ⏳ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -280,10 +281,10 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ⏳ | BM25 粗筛（Stage 1） | `app/pipeline/reranker.py` — FetchedDoc[] 按 `\n\n` 段落切分（≤2000字符/段）→ jieba 分词 → BM25Okapi 对每个 SubQuestion 评分 → 每文档取 top-3 segments → 最多 45 候选 | 决策 #19 |
-| ⏳ | LLM Rerank 精排（Stage 2） | DeepSeek API 调用：注入 `task_type` 加权维度（comparison→属性对齐度 / explainer→观点新颖度 / analysis→因果关联度），0-10 评分，输出 `Evidence[]`（top-K，K=min(max_sources, 候选数)） | 决策 #20 |
-| ⏳ | Rerank Prompt 模板 | 相关性（40%）+ 信息量（30%）+ 权威性（15%）+ `task_type_dimension`（15%）四维评分 | 决策 #21 |
-| ⏳ | Rerank 失败策略 | BM25 候选为空→E3105 / LLM Rerank 失败→重试 2 次→仍失败→E3105 / Evidence 数量<3→质量警告不阻断 | — |
+| ✅ | BM25 粗筛（Stage 1） | `app/pipeline/reranker.py` — FetchedDoc[] 按 `\n\n` 段落切分（≤2000字符/段）→ jieba 分词 → BM25Okapi 对每个 SubQuestion 评分 → 每文档取 top-3 segments → 最多 45 候选 | 决策 #19 |
+| ✅ | LLM Rerank 精排（Stage 2） | DeepSeek API 调用：注入 `task_type` 加权维度（comparison→属性对齐度 / explainer→观点新颖度 / analysis→因果关联度），0-10 评分，输出 `Evidence[]`（top-K，K=min(max_sources, 候选数)） | 决策 #20 |
+| ✅ | Rerank Prompt 模板 | 相关性（40%）+ 信息量（30%）+ 权威性（15%）+ `task_type_dimension`（15%）四维评分 | 决策 #21 |
+| ✅ | Rerank 失败策略 | BM25 候选为空→E3105 / LLM Rerank 失败→重试 2 次→仍失败→E3105 / Evidence 数量<3→质量警告不阻断 | — |
 
 > **Rerank 二段式架构**：[RESEARCH_PIPELINE.md §5](RESEARCH_PIPELINE.md#5-rerank--证据粗筛精排)。
 
@@ -368,8 +369,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 测试类型 | 说明 |
 |:---|:---|:---|:---|
-| ⏳ | BM25 粗筛测试 | 单元测试 | BM25Okapi 初始化 / jieba 分词 / 段落级评分 / top-3 选取 / 候选总数上限 45 / 空文档处理 |
-| ⏳ | LLM Rerank 测试 | 单元测试 | DeepSeek API Mock：正常评分 / task_type 加权维度验证（3 种）/ 无效 JSON 重试 / 重试耗尽→E3105 / 分数范围 0-10 校验 |
+| ✅ | BM25 粗筛测试 | 单元测试 | BM25Okapi 初始化 / jieba 分词 / 段落级评分 / top-3 选取 / 候选总数上限 45 / 空文档处理 |
+| ✅ | LLM Rerank 测试 | 单元测试 | DeepSeek API Mock：正常评分 / task_type 加权维度验证（3 种）/ 无效 JSON 重试 / 重试耗尽→E3105 / 分数范围 0-10 校验 |
 | ⏳ | Synthesis 单元测试 | 单元测试 | DeepSeek API Mock：观点聚类 / 共识识别 / 冲突检测 / 信息缺口 / 无效 JSON 重试 / 重试耗尽→E3104 |
 | ⏳ | Evidence Graph Build 测试 | 单元测试 | 数据导入完整性 / items 排序 / cluster 写回 / sources 聚合 / 空输入处理 / E3106 触发条件 |
 | ⏳ | Report Render 测试 | 单元测试 | 模板选择（3 种 task_type）/ LLM 渲染 Mock / `[来源N]` 正则提取 / `sources[]` 去重排序 / 引用缺失标记 / E3107 |
