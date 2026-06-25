@@ -38,7 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
-> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ⏳ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
+> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -312,11 +312,11 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ⏳ | Renderer 实现 | `app/pipeline/renderer.py` — 按 `task_type` 选择模板（comparison_v1 / explainer_v1 / analysis_v1）→ deepseek-v4-pro（`deep_thinking=False`，`temperature=0.5`，`max_tokens=8000`）→ 渲染 Markdown 报告 + `[来源N]` 引用锚点 | 决策 #25 |
-| ⏳ | 模板选择 | `comparison` → 概述→简介→对比矩阵→逐维度分析→总结 / `explainer` → 背景→按研究方向章节→争议与前沿→总结 / `analysis` → 现状→威胁分析→影响推演→应对策略→时间线 | 决策 #26 |
-| ⏳ | 引用锚点后处理 | 正则提取 Section 中所有 `[来源N]` → 去重+排序 → 填充 `section.sources[]` → 写入 `section_evidence` 关联表（M:N）→ 写入 `report_sections` 表 | 决策 #27 |
-| ⏳ | Report GET API | `GET /api/research/{task_id}/report` — 返回完整 Report JSON（`report.sections[]` + `evidence_graph` + `trace`） | — |
-| ⏳ | Render 失败策略 | LLM 失败→重试 1 次→仍失败→E3107 (`recoverable=true`，可复用 Evidence Graph 重渲) / Section 数量<预期→不阻断 / 引用提取失败→标记 `citation_issues` | — |
+| ✅ | Renderer 实现 | `app/pipeline/renderer.py` — 按 `task_type` 选择模板（comparison_v1 / explainer_v1 / analysis_v1）→ deepseek-v4-pro（`deep_thinking=False`，`temperature=0.5`，`max_tokens=8000`）→ 渲染 Markdown 报告 + `[来源N]` 引用锚点 | 决策 #25 |
+| ✅ | 模板选择 | `comparison` → 概述→简介→对比矩阵→逐维度分析→总结 / `explainer` → 背景→按研究方向章节→争议与前沿→总结 / `analysis` → 现状→威胁分析→影响推演→应对策略→时间线 | 决策 #26 |
+| ✅ | 引用锚点后处理 | 正则提取 Section 中所有 `[来源N]` → 去重+排序 → 填充 `section.sources[]` → 写入 `section_evidence` 关联表（M:N）→ 写入 `report_sections` 表 | 决策 #27 |
+| ✅ | Report GET API | `GET /api/research/{task_id}/report` — 返回完整 Report JSON（`report.sections[]` + `evidence_graph` + `trace`） | — |
+| ✅ | Render 失败策略 | LLM 失败→重试 1 次→仍失败→E3107 (`recoverable=true`，可复用 Evidence Graph 重渲) / Section 数量<预期→不阻断 / 引用提取失败→标记 `citation_issues` | — |
 
 > **Report Render 详设**：[RESEARCH_PIPELINE.md §8](RESEARCH_PIPELINE.md#8-report-render--报告渲染)。Report JSON 结构：[API.md §3.3](API.md#33-结果获取)。
 
@@ -372,9 +372,9 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | BM25 粗筛测试 | 单元测试 | BM25Okapi 初始化 / jieba 分词 / 段落级评分 / top-3 选取 / 候选总数上限 45 / 空文档处理 |
 | ✅ | LLM Rerank 测试 | 单元测试 | DeepSeek API Mock：正常评分 / task_type 加权维度验证（3 种）/ 无效 JSON 重试 / 重试耗尽→E3105 / 分数范围 0-10 校验 |
 | ✅ | Synthesis 单元测试 | 单元测试 | DeepSeek API Mock：观点聚类 / 共识识别 / 冲突检测 / 信息缺口 / 无效 JSON 重试 / 重试耗尽→E3104 / 空 evidence→E3104 / max_sources 截断 / task_type 注入 / 越界索引过滤 / conflicts null→空数组。共 10 用例 |
-| ⏳ | Evidence Graph Build 测试 | 单元测试 | 数据导入完整性 / items 排序 / cluster 写回 / sources 聚合 / 空输入处理 / E3106 触发条件 |
-| ⏳ | Report Render 测试 | 单元测试 | 模板选择（3 种 task_type）/ LLM 渲染 Mock / `[来源N]` 正则提取 / `sources[]` 去重排序 / 引用缺失标记 / E3107 |
-| ⏳ | Report API 接口测试 | 接口测试 | `GET /api/research/{task_id}/report` 完整 JSON 结构校验（`report.sections[]` + `evidence_graph` + `trace`）+ E2001/E2002/E2003 |
+| ✅ | Evidence Graph Build 测试 | 单元测试 | 数据导入完整性 / items 排序 / cluster 写回 / sources 聚合 / 空输入处理 / E3106 触发条件 |
+| ✅ | Report Render 测试 | 单元测试 | 模板选择（3 种 task_type）/ LLM 渲染 Mock / `[来源N]` 正则提取 / `sources[]` 去重排序 / 引用缺失标记 / E3107 |
+| ✅ | Report API 接口测试 | 接口测试 | `GET /api/research/{task_id}/report` 完整 JSON 结构校验（`report.sections[]` + `evidence_graph` + `trace`）+ E2001/E2002/E2003 |
 | ⏳ | Cancel API 接口测试 | 接口测试 | `POST /api/research/{task_id}/cancel` 正常取消 + E2003（已终态）+ E2001/E2002 |
 | ⏳ | 成本追踪测试 | 单元测试 | DeepSeek `usage` 对象解析 / Step 级 token 写入 / Task 级成本聚合 / `total_cost_usd` 计算 |
 | ⏳ | Pipeline 端到端集成测试（全链路） | 集成测试 | 全 7 阶段 Mock 跑通（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）+ SSE 事件序列完整 + Report 产出验证 |

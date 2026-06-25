@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import select
 
 from app.core.exceptions import EvidenceGraphBuildFailedException
@@ -510,7 +511,10 @@ class TestEvidenceGraphConsistency:
         # 查询实际 EvidenceItem.id（自增，通常 ≥1）
         result = await db_session.execute(
             select(EvidenceItem).where(EvidenceItem.task_id == task.id)
-            .order_by(EvidenceItem.relevance_score.desc().nulls_last())
+            .order_by(
+                sa.case((EvidenceItem.relevance_score == None, 1), else_=0),
+                EvidenceItem.relevance_score.desc(),
+            )
         )
         evidence_items = list(result.scalars().all())
 

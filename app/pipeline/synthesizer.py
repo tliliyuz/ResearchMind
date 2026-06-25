@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -333,7 +334,10 @@ async def _load_evidence(
         select(EvidenceItem)
         .where(EvidenceItem.task_id == task.id)
         .options(selectinload(EvidenceItem.source))
-        .order_by(EvidenceItem.relevance_score.desc().nulls_last())
+        .order_by(
+            sa.case((EvidenceItem.relevance_score == None, 1), else_=0),
+            EvidenceItem.relevance_score.desc(),
+        )
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())

@@ -10,6 +10,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import func
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -51,7 +52,7 @@ class ResearchSource(Base):
         server_default=sa.text("NULL"),
     )
     content: Mapped[str | None] = mapped_column(
-        sa.Text,
+        MEDIUMTEXT,
         default=None,
         server_default=sa.text("NULL"),
         comment="网页 Markdown 正文；fetch_status='success' 时写入",
