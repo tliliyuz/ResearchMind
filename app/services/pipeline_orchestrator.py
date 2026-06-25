@@ -15,10 +15,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from sqlalchemy import func, select as sa_select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.task_state_resolver import TaskStateResolver
+from app.core.task_state_resolver import FATAL_STEP_ERROR_CODES, TaskStateResolver
 from app.core.trace_recorder import TraceRecorder
 from app.models.enums import TASK_PHASE_ENUM, STEP_TYPE_ENUM
 from app.models.research_task import ResearchTask
@@ -146,28 +147,61 @@ class PipelineOrchestrator:
         logger.info("Pipeline 开始: task_id=%s", task_id)
 
         try:
-            # 1. 任务状态 pending → running
+            # 1. 任务状态 pending → running（CAS + commit）
             await self._start_task()
 
             # 2. 依次执行 7 个 Phase
             for step_type in PHASE_ORDER:
+                # 阶段重载：检查是否已取消
+                await self._session.refresh(self._task, ["status"])
+                if self._task.status == "canceling":
+                    logger.info("任务已被取消，停止 Pipeline: task_id=%s", task_id)
+                    self._task.status = "canceled"
+                    self._task.completed_at = datetime.now(timezone.utc)
+                    await self._session.commit()
+                    self._sse.publish(EVENT_TASK_FAILED, {
+                        "task_id": task_id,
+                        "error_type": "TaskCanceled",
+                        "error_description": "任务已被用户取消",
+                        "recoverable": False,
+                    })
+                    return
+
                 await self._run_phase(step_type)
+                # 每 Phase 完成后持久化 checkpoint（S4）
+                await self._session.commit()
 
             # 3. 全部 Phase 完成 → 推导最终状态
             await self._finalize_task()
+            await self._session.commit()
 
         except Exception as e:
             logger.exception("Pipeline 致命错误: task_id=%s, error=%s", task_id, e)
             await self._handle_fatal_error(e)
+            await self._session.commit()
 
     # ── 任务启动 ────────────────────────────────────────────
 
     async def _start_task(self) -> None:
-        """将任务从 pending 转为 running，发送 task.created 事件。"""
+        """将任务从 pending 转为 running（CAS + commit），发送 task.created 事件。"""
         now = datetime.now(timezone.utc)
-        self._task.status = "running"
-        self._task.started_at = now
-        await self._session.flush()
+
+        # CAS: 仅当 status='pending' 时才更新为 running
+        result = await self._session.execute(
+            sa_update(ResearchTask)
+            .where(ResearchTask.id == self._task.id, ResearchTask.status == "pending")
+            .values(status="running", started_at=now)
+        )
+        if result.rowcount == 0:
+            logger.warning(
+                "CAS 失败：任务状态已变更，跳过启动: task_id=%s, current_status=%s",
+                self._task.id, self._task.status,
+            )
+            return
+        await self._session.commit()
+
+        # 刷新 ORM 对象让内存状态与 DB 一致
+        await self._session.refresh(self._task)
 
         self._sse.publish(EVENT_TASK_CREATED, {
             "task_id": str(self._task.id),
@@ -191,6 +225,15 @@ class PipelineOrchestrator:
         step = await self._create_step(step_type)
         step_id = str(step.id)
         self._last_step_id = step_id
+
+        # 1.5 Step 终态检查（防御深度：Phase4 断点续跑后，可能遇到已完成的 Step）
+        TERMINAL_STATUSES = {"completed", "failed", "skipped"}
+        if step.status in TERMINAL_STATUSES:
+            logger.info(
+                "Step 已处于终态，跳过执行: step_id=%s, type=%s, status=%s",
+                step_id, step_type, step.status,
+            )
+            return
 
         # 2. 幂等锁检查
         locked = await acquire_step_lock_async(
@@ -392,7 +435,7 @@ class PipelineOrchestrator:
         error_msg = str(error)
 
         # 获取错误码（如果异常是 AppException 子类）
-        error_code = getattr(error, "code", None)
+        error_code = getattr(error, "error_code", None)
 
         step.status = "failed"
         step.completed_at = now
@@ -409,7 +452,6 @@ class PipelineOrchestrator:
         })
 
         # 判断是否致命：检查 error_code 是否在 FATAL 集合中
-        from app.core.task_state_resolver import FATAL_STEP_ERROR_CODES
         if error_code and error_code in FATAL_STEP_ERROR_CODES:
             self._sse.publish(EVENT_TASK_FAILED, {
                 "task_id": str(self._task.id),
@@ -449,17 +491,31 @@ class PipelineOrchestrator:
         completed = self._task.completed_steps or 0
         progress = round(completed / total, 2) if total > 0 else 0.0
 
-        # 统计当前 Phase 内的 Step 数量（简单计数：phase 内全部 step）
-        # v1.0 中每个 phase 一个 step，所以 step_index 始终为 1
-        phase_steps_count = 1  # v1.0 单 step / phase
+        # 统计当前 Phase 内的 Step 数量（通过 step_type 列，即 phase 标识）
+        count_result = await self._session.execute(
+            sa_select(func.count()).select_from(ResearchStep).where(
+                ResearchStep.task_id == self._task.id,
+                ResearchStep.step_type == step.step_type,
+            )
+        )
+        phase_total = count_result.scalar() or 1
+        # 统计已完成数量
+        completed_result = await self._session.execute(
+            sa_select(func.count()).select_from(ResearchStep).where(
+                ResearchStep.task_id == self._task.id,
+                ResearchStep.step_type == step.step_type,
+                ResearchStep.status.in_(["completed", "skipped"]),
+            )
+        )
+        phase_completed = completed_result.scalar() or 0
 
         context = {
             "current_phase": phase_name,
             "last_completed_step_id": str(step.id),
             "execution_pointer": {
                 "phase": phase_name,
-                "step_index": 1,
-                "total_steps_in_phase": phase_steps_count,
+                "step_index": phase_completed,
+                "total_steps_in_phase": phase_total,
             },
             "progress": {
                 "completed_steps": completed,
@@ -490,12 +546,19 @@ class PipelineOrchestrator:
         )
 
         if new_status == "failed" and error_info:
-            # 致命失败 → 提前终止
-            self._task.status = "failed"
-            self._task.error_code = error_info.get("error_code")
-            self._task.error_message = error_info.get("error_message")
-            self._task.recoverable = error_info.get("recoverable", False)
-            self._task.completed_at = datetime.now(timezone.utc)
+            # 致命失败 → 提前终止（CAS）
+            now = datetime.now(timezone.utc)
+            await self._session.execute(
+                sa_update(ResearchTask)
+                .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
+                .values(
+                    status="failed",
+                    error_code=error_info.get("error_code"),
+                    error_message=error_info.get("error_message"),
+                    recoverable=error_info.get("recoverable", False),
+                    completed_at=now,
+                )
+            )
             await self._session.flush()
 
             self._sse.publish(EVENT_TASK_FAILED, {
@@ -512,7 +575,7 @@ class PipelineOrchestrator:
     # ── 最终化 ──────────────────────────────────────────────
 
     async def _finalize_task(self) -> None:
-        """全部 Phase 完成后推导最终 Task State 并写入。"""
+        """全部 Phase 完成后推导最终 Task State 并写入（CAS）。"""
         steps = self._task.steps if hasattr(self._task, "steps") else []
         evidence_count = self._task.total_evidence or 0
 
@@ -521,17 +584,29 @@ class PipelineOrchestrator:
         )
 
         now = datetime.now(timezone.utc)
-        self._task.status = new_status
-        self._task.completed_at = now
+        trace_data = self._trace.finish()
 
+        # CAS: 仅当 status='running' 时才写入最终状态
+        values = {
+            "status": new_status,
+            "completed_at": now,
+            "trace": trace_data,
+        }
         if error_info:
-            self._task.error_code = error_info.get("error_code")
-            self._task.error_message = error_info.get("error_message")
-            self._task.recoverable = error_info.get("recoverable", False)
+            values["error_code"] = error_info.get("error_code")
+            values["error_message"] = error_info.get("error_message")
+            values["recoverable"] = error_info.get("recoverable", False)
 
-        # 写入 trace
-        self._task.trace = self._trace.finish()
-
+        result = await self._session.execute(
+            sa_update(ResearchTask)
+            .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
+            .values(**values)
+        )
+        if result.rowcount == 0:
+            logger.warning(
+                "CAS 失败：最终化时任务状态已变更: task_id=%s",
+                self._task.id,
+            )
         await self._session.flush()
 
         # SSE 最终事件
@@ -568,20 +643,32 @@ class PipelineOrchestrator:
         )
 
     async def _handle_fatal_error(self, error: Exception) -> None:
-        """处理未捕获的致命错误：更新 task status 为 failed。"""
+        """处理未捕获的致命错误：CAS 更新 task status 为 failed。"""
         try:
-            self._task.status = "failed"
-            self._task.completed_at = datetime.now(timezone.utc)
-            self._task.error_code = getattr(error, "code", None) or "E3999"
-            self._task.error_message = str(error)
-            self._task.recoverable = False
-            self._task.trace = self._trace.finish()
+            now = datetime.now(timezone.utc)
+            error_code = getattr(error, "error_code", None) or "E3999"
+            error_msg = str(error)
+            trace_data = self._trace.finish()
+
+            # CAS: 仅当 status='running' 时才更新为 failed
+            await self._session.execute(
+                sa_update(ResearchTask)
+                .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
+                .values(
+                    status="failed",
+                    completed_at=now,
+                    error_code=error_code,
+                    error_message=error_msg,
+                    recoverable=False,
+                    trace=trace_data,
+                )
+            )
             await self._session.flush()
 
             self._sse.publish(EVENT_TASK_FAILED, {
                 "task_id": str(self._task.id),
                 "error_type": error.__class__.__name__,
-                "error_description": str(error),
+                "error_description": error_msg,
                 "recoverable": False,
             })
         except Exception as inner:

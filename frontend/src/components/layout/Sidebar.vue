@@ -375,6 +375,7 @@ function toggleCollapse() {
 
 /** 新建研究 — 跳转到研究页 */
 function handleNewResearch() {
+  taskStore.clearCurrent()
   router.push('/research')
 }
 

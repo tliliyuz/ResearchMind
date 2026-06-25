@@ -12,7 +12,7 @@ export function createTask(topic, requirements) {
 
 /**
  * 获取当前用户的研究任务历史列表（分页，按 created_at DESC）
- * @param {object} params - { page, page_size, status }
+ * @param {object} params - { page, page_size, status, keyword }
  * @returns {Promise} response.data.data = { total, page, page_size, items }
  */
 export function getTaskList(params) {

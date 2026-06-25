@@ -39,14 +39,11 @@ async def create_research_task(
 
     对齐 API.md §3.1 POST /api/research。
     1. Service 层写入 task + 首个 planning step（flush）
-    2. Celery 分发 execute_research_task
-    3. get_db 依赖在响应返回后自动 commit
-
-    注：delay() 在 get_db commit 之前调用存在微小的竞态窗口，
-    但 Celery Worker 内置了幂等检查（task 不存在时优雅跳过），
-    v1.0 可接受此设计。
+    2. 显式 commit —— CLAUDE.md 强制规则：delay() 前必须 commit
+    3. Celery 分发 execute_research_task
     """
     result = await create_task(db, current_user["user_id"], req)
+    await db.commit()
     _execute_research_task.delay(str(result.task_id))
     return {"code": "0", "message": "研究任务已创建", "data": result.model_dump()}
 
@@ -56,13 +53,14 @@ async def list_research_tasks(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     status: str | None = Query(None, description="按状态筛选"),
+    keyword: str | None = Query(None, description="按主题关键字搜索"),
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取当前用户的研究任务历史列表（分页）。
 
     对齐 API.md §3.1 GET /api/research。
-    按 created_at DESC 排序，支持 status 筛选。
+    按 created_at DESC 排序，支持 status 筛选与 topic 关键字模糊搜索。
     """
     result = await get_task_list(
         db,
@@ -70,6 +68,7 @@ async def list_research_tasks(
         page=page,
         page_size=page_size,
         status=status,
+        keyword=keyword,
     )
     return {"code": "0", "message": "ok", "data": result.model_dump()}
 

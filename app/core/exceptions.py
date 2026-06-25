@@ -200,7 +200,7 @@ class PlanningFailedException(AppException):
     def __init__(self, detail: str = ""):
         super().__init__(
             "E3101", "LLM 无法拆解研究主题", 500,
-            {"error_type": "PlanningFailed", "error_description": detail or "Planning 阶段重试耗尽，LLM 无法拆解研究主题", "recoverable": True, "retry_after_ms": 5000},
+            {"error_type": "PlanningFailed", "error_description": detail or "Planning 阶段重试耗尽，LLM 无法拆解研究主题", "recoverable": False},
         )
 
 
@@ -232,7 +232,7 @@ class RerankFailedException(AppException):
     def __init__(self, detail: str = ""):
         super().__init__(
             "E3105", "Rerank 输入格式错误或计算失败", 500,
-            {"error_type": "RerankFailed", "error_description": detail or "Rerank 阶段失败（BM25 候选为空或 LLM Rerank 重试耗尽）", "recoverable": True},
+            {"error_type": "RerankFailed", "error_description": detail or "Rerank 阶段失败（BM25 候选为空或 LLM Rerank 重试耗尽）", "recoverable": False},
         )
 
 
@@ -281,6 +281,16 @@ class LLMUnknownException(AppException):
         super().__init__(
             "E3111", "LLM 调用返回未预期错误", 500,
             {"error_type": "LLMUnknown", "error_description": detail or "LLM 调用返回未预期错误", "recoverable": True, "retry_after_ms": 3000},
+        )
+
+
+class UnknownInternalException(AppException):
+    """未预期的内部错误（兜底错误码，Worker 崩溃/未捕获异常时使用）。"""
+
+    def __init__(self, detail: str = ""):
+        super().__init__(
+            "E3999", "未预期的内部错误", 500,
+            {"error_type": "UnknownInternal", "error_description": detail or "Pipeline 执行过程中发生未预期的内部错误", "recoverable": False},
         )
 
 

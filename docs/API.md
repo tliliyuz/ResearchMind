@@ -757,30 +757,62 @@
   "message": "ok",
   "data": {
     "task_id": "550e8400-e29b-41d4-a716-446655440000",
-    "task_status": "running",
+    "status": "running",
     "current_phase": "fetching",
-    "execution_pointer": {
-      "phase": "fetching",
-      "step_index": 3,
-      "total_steps_in_phase": 10
-    },
     "progress": {
       "completed_steps": 7,
       "total_steps": 12,
       "progress": 0.58
     },
+    "steps": [
+      {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "phase": "searching",
+        "step_type": "search",
+        "status": "completed",
+        "label": "搜索子问题 1",
+        "started_at": "2026-06-19T10:00:35+00:00",
+        "completed_at": "2026-06-19T10:00:42+00:00",
+        "duration_ms": 7000,
+        "error_code": null,
+        "error_message": null
+      }
+    ],
+    "topics": "量子计算在药物发现中的应用",
+    "created_at": "2026-06-19T10:00:00+00:00",
+    "started_at": "2026-06-19T10:00:05+00:00",
+    "completed_at": null,
+    "error": {
+      "error_code": "E3101",
+      "error_message": "Planning 阶段重试耗尽",
+      "recoverable": false
+    },
+    "stats": {
+      "total_sources": 25,
+      "total_evidence": 42
+    },
+    "execution_pointer": {
+      "_comment": "[v2] 未实现",
+      "phase": "fetching",
+      "step_index": 3,
+      "total_steps_in_phase": 10
+    },
     "last_completed_step": {
+      "_comment": "[v2] 未实现",
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "type": "search",
       "completed_at": "2026-06-19T10:00:42+00:00"
     },
-    "checkpoints": [
-      {
-        "phase": "planning",
-        "step_id": "b2c3d4e5-f6a7-8901-bcde-f1234567890",
-        "saved_at": "2026-06-19T10:00:12+00:00"
-      }
-    ]
+    "checkpoints": {
+      "_comment": "[v2] 未实现",
+      "items": [
+        {
+          "phase": "planning",
+          "step_id": "b2c3d4e5-f6a7-8901-bcde-f1234567890",
+          "saved_at": "2026-06-19T10:00:12+00:00"
+        }
+      ]
+    }
   }
 }
 ```

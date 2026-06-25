@@ -187,7 +187,7 @@ ResearchMind/
 │   │   │   └── global.css          # 全局样式（Design Token --rm-* CSS 变量）
 │   │   │
 │   │   └── utils/
-│   │       ├── sse.js              # SSE 事件解析（fetch + ReadableStream，17 种事件类型）
+│   │       ├── sse.js              # SSE 事件解析（fetch + ReadableStream，15 种事件类型 v1.0 + 2 种预留 [v2]）
 │   │       ├── markdown.js         # Markdown 渲染（markdown-it + highlight.js + [来源N] 锚点）
 │   │       └── format.js           # 共享格式化工具（formatDateTime/formatFileSize/formatRelativeTime）
 │   │

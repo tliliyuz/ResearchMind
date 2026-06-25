@@ -289,10 +289,12 @@ async def test_release_step_lock_async_删除对应key():
     """异步版：释放锁 → DELETE Key"""
     with patch("app.core.redis_client.get_async_redis") as mock_get_async:
         mock_redis = MagicMock()
-        mock_redis.delete = _make_async_mock_delete()
+        mock_redis.delete = AsyncMock(return_value=None)
         mock_get_async.return_value = mock_redis
 
         await release_step_lock_async("task-1", "search")
+
+        mock_redis.delete.assert_called_once_with(f"{KEY_PREFIX}:task-1:search")
 
 
 @pytest.mark.asyncio

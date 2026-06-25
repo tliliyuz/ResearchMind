@@ -173,8 +173,9 @@ async def sse_event_stream(
 
                 event_type = payload.get("event", "unknown")
                 event_data = payload.get("data", {})
+                event_seq = payload.get("seq")
 
-                yield format_sse_event(event_type, event_data)
+                yield format_sse_event(event_type, event_data, event_id=event_seq)
 
         except asyncio.CancelledError:
             logger.debug("SSE 订阅已取消: task_id=%s", task_id)

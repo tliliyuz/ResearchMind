@@ -24,6 +24,7 @@ from typing import Any
 # 定义来源：ARCHITECTURE.md §5.5 Failure Model + API.md §5.3
 FATAL_STEP_ERROR_CODES = frozenset({
     "E3101",   # PlanningFailed — LLM 无法拆解研究主题
+    "E3102",   # SearchFailed — Tavily API 完全不可用（全部搜索失败）
     "E3105",   # RerankFailed — Rerank 输入格式错误或计算失败
     "E3106",   # EvidenceGraphBuildFailed — Evidence Graph 构建失败
     "E3110",   # LLMAuthFailed — LLM 认证失败（重试无意义）

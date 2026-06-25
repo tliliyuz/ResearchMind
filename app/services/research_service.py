@@ -128,10 +128,11 @@ async def get_task_list(
     page: int = 1,
     page_size: int = 20,
     status: str | None = None,
+    keyword: str | None = None,
 ) -> ResearchTaskListResponse:
     """获取当前用户的研究任务历史列表。
 
-    按 created_at DESC 排序，支持 status 筛选与分页。
+    按 created_at DESC 排序，支持 status 筛选、topic 关键字模糊搜索与分页。
     """
     if page < 1:
         page = 1
@@ -144,6 +145,8 @@ async def get_task_list(
     conditions = [ResearchTask.user_id == user_id]
     if status:
         conditions.append(ResearchTask.status == status)
+    if keyword and keyword.strip():
+        conditions.append(ResearchTask.topic.ilike(f"%{keyword.strip()}%"))
 
     # 总数查询
     count_q = select(func.count()).select_from(ResearchTask).where(*conditions)

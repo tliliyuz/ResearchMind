@@ -20,6 +20,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+
+from app.config import settings
 from app.models.research_source import ResearchSource
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
@@ -50,13 +52,10 @@ _PRIVATE_NETWORKS = [
 ]
 
 _USER_AGENT = "ResearchMind/1.0 (research-agent; +https://github.com/ResearchMind)"
-_FETCH_TIMEOUT = 15  # 秒（对齐 settings.FETCH_TIMEOUT）
-_MAX_CONTENT_LENGTH = 102400  # 100KB
-_MAX_RESPONSE_BODY = 2 * 1024 * 1024  # 2MB，超过则跳过
-_FETCH_RETRY_MAX = 1  # 超时场景重试次数
+_MAX_RESPONSE_BODY = 2 * 1024 * 1024  # 2MB，超过则跳过（config.py 未设此项，Phase4 评估后添加）
 
 
-def _check_url_safety(url: str) -> str | None:
+async def _check_url_safety(url: str) -> str | None:
     """URL 安全检查。返回 None = 通过，返回字符串 = 拒绝原因。
 
     检查项（对齐 RESEARCH_PIPELINE.md §4.4）：
@@ -77,8 +76,10 @@ def _check_url_safety(url: str) -> str | None:
         return "URL 缺少 hostname"
 
     # IP 黑名单检查（SSRF 防护）
+    # DNS 解析通过 run_in_executor 异步化，避免阻塞 Worker 协程
     try:
-        ip_addr = socket.gethostbyname(hostname)
+        loop = asyncio.get_running_loop()
+        ip_addr = await loop.run_in_executor(None, socket.gethostbyname, hostname)
         ip_obj = ipaddress.ip_address(ip_addr)
         for network in _PRIVATE_NETWORKS:
             if ip_obj in network:
@@ -110,7 +111,7 @@ async def _fetch_one_url(
     """
     timeout_config = httpx.Timeout(
         connect=10.0,
-        read=_FETCH_TIMEOUT,
+        read=settings.FETCH_TIMEOUT,
         write=10.0,
         pool=5.0,
     )
@@ -184,12 +185,12 @@ async def _fetch_one_url(
     original_length = len(extracted)
 
     # 内容截断（100KB）
-    if original_length > _MAX_CONTENT_LENGTH:
+    if original_length > settings.FETCH_MAX_CONTENT_LENGTH:
         # 按字符边界截断（避免截断多字节 UTF-8 字符）
-        truncated = extracted[:_MAX_CONTENT_LENGTH]
+        truncated = extracted[:settings.FETCH_MAX_CONTENT_LENGTH]
         # 回退到最后一个完整段落
         last_para = truncated.rfind("\n\n")
-        if last_para > _MAX_CONTENT_LENGTH // 2:
+        if last_para > settings.FETCH_MAX_CONTENT_LENGTH // 2:
             truncated = truncated[:last_para]
         content = truncated
     else:
@@ -274,7 +275,7 @@ async def run_fetch(
         })
 
         # a. 安全检查
-        safety_error = _check_url_safety(url)
+        safety_error = await _check_url_safety(url)
         if safety_error:
             logger.warning("Fetch URL 安全拦截: url=%s, reason=%s", url, safety_error)
             source.fetch_status = "blocked"

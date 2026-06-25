@@ -106,6 +106,13 @@ class ResearchTask(Base):
         default=None,
         server_default=sa.text("NULL"),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+        comment="记录最后修改时间（ORM onupdate 维护）",
+    )
 
     # ── 索引 ──
     __table_args__ = (

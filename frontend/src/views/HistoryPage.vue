@@ -128,7 +128,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { useTaskStore } from '@/stores/task'
 import { formatDateTime } from '@/utils/format'
 
@@ -175,6 +175,7 @@ async function loadList() {
     page: currentPage.value,
     page_size: pageSize.value,
     status: filterStatus.value || undefined,
+    keyword: searchKeyword.value || undefined,
   })
 }
 
@@ -205,6 +206,11 @@ async function handleDelete(row) {
     return
   }
 
+  const loading = ElLoading.service({
+    lock: true,
+    text: '正在删除...',
+    background: 'rgba(0, 0, 0, 0.7)',
+  })
   try {
     await taskStore.deleteTask(row.task_id)
     ElMessage.success('删除成功')
@@ -221,6 +227,8 @@ async function handleDelete(row) {
     } else {
       ElMessage.error(err.response?.data?.message || '删除失败')
     }
+  } finally {
+    loading.close()
   }
 }
 
@@ -314,8 +322,8 @@ onMounted(() => {
 }
 
 .task-type-tag.analysis {
-  background: #F3E8FF;
-  color: #7C3AED;
+  background: var(--rm-accent-light);
+  color: var(--rm-accent);
 }
 
 /* ===== 状态标签 ===== */
@@ -338,6 +346,12 @@ onMounted(() => {
 .status-tag.running {
   background: var(--rm-secondary-light);
   color: var(--rm-secondary);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .status-tag.completed {

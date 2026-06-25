@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-20 |
+| 最后更新 | 2026-06-25 |
 
 > 本文档是 **开发排期、Phase 顺序、任务依赖关系** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。
 
@@ -174,7 +174,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Celery App 初始化 | `app/tasks/celery_app.py` — Redis Broker + Result Backend + `research_task` 队列 | — |
 | ✅ | Celery 任务入口 | `app/tasks/research_task.py` — `execute_research_task(task_id)` 主任务，`asyncio.run()` 包裹异步逻辑，幂等检查 + Pipeline 执行 + 紧急失败兜底 | — |
 | ✅ | Pipeline Orchestrator | `app/services/pipeline_orchestrator.py` — `PipelineOrchestrator` 类，七阶段串行调度（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）。每 Phase：创建 ResearchStep → 幂等锁检查 → SSE 事件发射 → Phase handler 调用 → output 写入 → execution_context 原子更新 → TaskStateResolver 检查提前终止 → 释放锁。`build_default_phase_handlers()` 注册表（planning/search/fetch → Phase 2 stub，rerank/synthesis/evidence_graph/render → 自动跳过等待 Phase 3） | 决策 #7 |
-| ✅ | SSE Bridge | `app/pipeline/sse_bridge.py` — SSEBridge 类（Redis Pub/Sub 同步发布层 + 17 种事件类型常量 + `seq` 序号单调递增）+ `sse_event_stream()` 异步订阅生成器（连接时推送 `task.status.snapshot` + `stream_with_heartbeat` 包裹）。跨平台 Pub/Sub（Linux 原生 `redis.asyncio` / Windows `_SyncPubSubWrapper` 线程池包装） | 决策 #8 |
+| ✅ | SSE Bridge | `app/pipeline/sse_bridge.py` — SSEBridge 类（Redis Pub/Sub 同步发布层 + 15 种事件类型常量（v1.0）+ 2 种预留 [v2] + `seq` 序号单调递增）+ `sse_event_stream()` 异步订阅生成器（连接时推送 `task.status.snapshot` + `stream_with_heartbeat` 包裹）。跨平台 Pub/Sub（Linux 原生 `redis.asyncio` / Windows `_SyncPubSubWrapper` 线程池包装） | 决策 #8 |
 | ✅ | Celery 幂等锁 | Redis `SET idempotency_key:{task_id}:{step_type} EX 600 NX`，防止重复入队（同步+异步双接口 `acquire_step_lock` / `acquire_step_lock_async`） | — |
 
 > **注意**：Celery 分发（`delay()`）在 API 层 `create_research_task` 中调用，位于 `get_db` commit 之前，存在微小竞态窗口。Worker 内置幂等检查（task 不存在时优雅跳过），v1.0 可接受。Phase 4 优化。
@@ -214,7 +214,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ✅ | 16 种 SSE 事件类型实现 | `task.created` / `task.status.snapshot` / `phase.started` / `phase.completed` / `step.started` / `step.progress` / `step.completed` / `step.failed` / `step.skipped` / `task.progress` / `checkpoint.saved` / `task.warning` / `task.completed` / `task.failed` / `task.canceled` | 决策 #16 |
+| ✅ | 15 种 SSE 事件类型实现（v1.0）+ 2 种预留 [v2] | `task.created` / `task.status.snapshot` / `phase.started` / `phase.completed` / `step.started` / `step.progress` / `step.completed` / `step.failed` / `step.skipped` / `task.progress` / `checkpoint.saved` / `task.warning` / `task.completed` / `task.failed` / `task.canceled`。`task.paused` / `task.resumed` 预留 [v2] | 决策 #16 |
 | ✅ | `GET /api/research/{task_id}/stream` | SSE 连接端点，`text/event-stream`，15s 心跳 `: ping\n\n`，`seq` 序号有序保证 | 决策 #17 |
 | ✅ | SSE 重连恢复 | 客户端重连时立即推送 `task.status.snapshot`（含当前 Task State / Phase / 所有已完成 Step 摘要 / `progress`），后续恢复正常增量推送 | 决策 #18 |
 | ✅ | `GET /api/research/{task_id}/state` | REST 版状态快照（SSE `task.status.snapshot` 的等价物），供客户端轮询降级 | — |
@@ -230,8 +230,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | 快捷示例卡片组件 | `components/task/ExampleCard.vue` — 3 个预设示例，hover teal-500/50 border，点击自动填入 topic + 选中对应 task_type | FRONTEND.md §4.3.5 |
 | ✅ | ResearchPage 状态切换 | 根据 `taskStore.current.status` 切换三种 UI：创建态（`null`）/ 运行态（`pending`/`running`）/ 完成态（`completed`/`partially_completed`/`failed`/`canceled`） | FRONTEND.md §4.2 |
 | ✅ | TaskStore (Pinia) | `stores/task.js` — `taskList` / `current` / `sseStatus`(5态：disconnected/connecting/connected/reconnecting/error) / `progress` / `create()` / `fetchList()` / `fetchDetail()` / `cancel()` / `retry()` / `connectSSE()` / `disconnect()` | FRONTEND.md §1.2 |
-| ✅ | Research API 封装 | `api/research.js` — `createTask()` / `getTaskList()` / `getTaskDetail()` / `deleteTask()` / `cancelTask()` / `retryTask()` / `getReport()` | — |
-| ✅ | SSE 解析工具 | `utils/sse.js` — `fetch` + `ReadableStream` + `response.body.getReader()` 逐块读取 + buffer 按 `\n\n` 分割 + 注释帧跳过（`: ping`）+ `event:`/`data:` 行解析 → 回调 dispatch。从 DocMind 复制解析框架（~80 行），替换全部 17 种事件处理器 | FRONTEND.md §8, FRONTEND.md §1.4 |
+| ✅ | Research API 封装 | `api/research.js` — `createTask()` / `getTaskList()` / `getTaskDetail()` / `deleteTask()` / `cancelTask()` / `getTaskState()` | — |
+| ✅ | SSE 解析工具 | `utils/sse.js` — `fetch` + `ReadableStream` + `response.body.getReader()` 逐块读取 + buffer 按 `\n\n` 分割 + 注释帧跳过（`: ping`）+ `event:`/`data:` 行解析 → 回调 dispatch。从 DocMind 复制通用解析框架（~80 行，0 事件处理器），事件处理在 `stores/task.js`（15 个 case，v1.0 + 2 种 [v2] 预留） | FRONTEND.md §8, FRONTEND.md §1.4 |
 | ✅ | 格式化工具 | `utils/format.js` — `formatDateTime()` / `formatRelativeTime()` / `formatNumber()` / `formatDuration()` / `formatBytes()`。已从 DocMind 复制并扩展 `formatNumber`/`formatDuration` | FRONTEND.md §1.4 |
 | ✅ | HistoryPage | `views/HistoryPage.vue` — 表格（研究主题截取前 40 字符 + tooltip / task_type 标签 / 状态标签 / 来源数 / 证据数 / 创建时间 / 操作[查看/删除]）+ 状态筛选 `el-select` + 主题搜索 `el-input` + 分页 `el-pagination` + 空状态「暂无研究任务」+ 引导按钮 → `/research` | FRONTEND.md §5 |
 | ✅ | History API 封装 | `api/research.js` 中 `getTaskList()` — 分页 + `status` 筛选 + `search` 搜索 + `sort_by=created_at` + `order=desc` | — |
@@ -241,8 +241,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 推迟项 | 排期 | 原因 |
 |:---|:---|:---|
-| 断点续跑（Retry 从 Checkpoint 恢复） | Phase 4 | Phase 2 先跑通主链路，Checkpoint 机制在 Phase 4 与 Execution Context 一起实现 |
-| Cancel 中断 | Phase 4 | 依赖 Execution Context + Worker 中断信号机制 |
+| 断点续跑（Retry 从 Checkpoint 恢复） | Phase 4 | Phase 2 已实现 execution_context 原子更新 + checkpoint.saved SSE 事件；Phase 4 补齐持久化 checkpoint + Retry API |
+| Cancel 中断（后端） | Phase 3 | Phase 2 已实现前端取消 UI；后端 `POST /api/research/{id}/cancel` 在 Phase 3 §4.5 实现 |
 | Rerank / Synthesis / Evidence Graph / Render | Phase 3 | Phase 2 聚焦 Pipeline 前半段 + SSE 框架 |
 | 管理后台 | Phase 5 | 先完成用户侧核心链路 |
 | ResearchPage 运行态（Pipeline 进度可视化） | Phase 3 | 依赖 Phase 3 后端全链路跑通 + 完整 SSE 事件流 |
@@ -261,7 +261,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Planner 单元测试 | 单元测试 | LLM 调用 Mock：正常拆解（3-5 SubQuestions）/ 输出校验失败重试 / 3 次重试耗尽→E3101 / task_type 策略注入验证（3 种 × Prompt 含策略段落） |
 | ✅ | Searcher 单元测试 | 单元测试 | Tavily API Mock：正常搜索 / 单子问题 0 结果→SKIPPED / API 失败重试→恢复 / 重试耗尽→SKIPPED / 全失败→E3102 / 跨子问题 URL 去重 / 总结果>25 截断 |
 | ✅ | Fetcher 单元测试 | 单元测试 | HTTP Mock：正常抓取+正文提取 / 超时重试→恢复 / 403→直接 SKIPPED / DNS 失败→SKIPPED / SSRF 防护（内网 IP 拒绝）/ 正文为空→SKIPPED |
-| ✅ | SSE 事件流测试 | 单元测试 | `StreamingResponse` 事件序列 / 16 种事件 type 格式校验 / 15s 心跳帧 / `seq` 递增 / 重连 snapshot 数据结构 |
+| ✅ | SSE 事件流测试 | 单元测试 | `StreamingResponse` 事件序列 / 15 种事件 type 格式校验 / 15s 心跳帧 / `seq` 递增 / 重连 snapshot 数据结构 |
 | ✅ | Celery 幂等锁测试 | 单元测试 | Redis `SET NX` 获取锁 / 已存在拒绝 / TTL 过期后重新获取 / 阶段完成后释放 / 异步版 acquire/release。共 19 用例 |
 | ✅ | Pipeline 端到端集成测试（前半段） | 集成测试 | Planning→Search→Fetch 三阶段 Mock 全链路 + SSE 事件序列完整 + Fetch 结果持久化验证 |
 | ✅ | 前端 ResearchPage 创建态组件测试 | 组件测试 | 表单渲染 / topic 字数校验（>500字符拒绝）/ task_type 卡片选中高亮 / 高级选项折叠展开 / 提交 loading / 快捷示例卡片点击填入 / 提交成功切换到运行态。共 15 用例 |
@@ -406,7 +406,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 13 | Search 失败：单个 SKIPPED（不致命）/ 全部失败→E3102（致命） | RESEARCH_PIPELINE.md §3.4 |
 | 14 | Fetch 安全：协议白名单 + IP 黑名单 SSRF 防护 + 15s 超时 | RESEARCH_PIPELINE.md §4.4 |
 | 15 | Fetch 失败：403/404/DNS 不重试直接 SKIPPED / 超时重试 1 次 | RESEARCH_PIPELINE.md §4.5 |
-| 16 | SSE 16 种事件类型：task.* / phase.* / step.* / checkpoint | API.md §4.1 |
+| 16 | SSE 15 种事件类型（v1.0）+ 2 种预留 [v2]：task.* / phase.* / step.* / checkpoint | API.md §4.1 |
 | 17 | SSE 实现：手动 `StreamingResponse`（非 sse-starlette）+ 15s 心跳 | API.md §4 |
 | 18 | SSE 重连恢复：`task.status.snapshot` 立即推送完整状态快照 | API.md §4.2 |
 | 19 | BM25 Stage 1：纯内存计算 ~50ms，零 API 成本，45 候选上限 | RESEARCH_PIPELINE.md §5.3 |
@@ -449,7 +449,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
 | ⏳ | Retry UI | 失败视图 `recoverable=true` 时「断点续跑」按钮 → `ElMessageBox.confirm` 确认 → `POST /api/research/{task_id}/retry` → 成功(202)→自动切换到运行态→重连 SSE |
-| ⏳ | Cancel UI 完善 | 运行态「取消研究」按钮 → `ElMessageBox.confirm('确定要取消当前研究吗？已完成的部分将保留。')` → `POST /api/research/{task_id}/cancel` → 成功→SSE 收到 `task.canceled`→切换到取消视图。失败（如已终态 E2003）→`ElMessage.error` 显示原因 |
+| ✅ | Cancel UI | Phase2 已实现：运行态「取消研究」按钮 → `ElMessageBox.confirm` → `POST /api/research/{task_id}/cancel` → SSE 收到 `task.canceled` → 切换到取消视图。失败→`ElMessage.error`。后端 Cancel API 在 Phase3 §4.5 ⏳ |
 | ⏳ | Sidebar 会话入口适配 | 历史任务区域展示空态（无任务时），点击「新建研究」按钮清空当前任务→切换到创建态，「历史任务」链接高亮路由 `/history` |
 
 ### 5.4 🚫 本阶段不做的

@@ -22,6 +22,8 @@
     --rm-danger-border: rgba(225, 29, 72, 0.2);
     --rm-info: #3B82F6;
     --rm-info-light: #EFF6FF;
+    --rm-accent: #7C3AED;
+    --rm-accent-light: #F3E8FF;
 
     /* ===== 中性色（slate 冷色系） ===== */
     --rm-bg-page: #F8FAFC;
@@ -37,7 +39,7 @@
     --rm-border-light: #F1F5F9;
 
     /* ===== 暗色侧边栏专用 ===== */
-    --rm-bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+    --rm-bg-sidebar-hover: rgba(30, 41, 59, 0.5);
     --rm-bg-sidebar-active: #1E293B;
     --rm-border-dark: #1E293B;
     --rm-border-darker: #334155;
@@ -119,6 +121,7 @@
     --rm-section-nav-width: 240px;
     --rm-input-height: 40px;
     --rm-empty-icon-size: 48px;
+    --rm-welcome-icon-size: 56px;
 
     /* ===== 过渡 ===== */
     --rm-transition-fast: 0.15s ease;

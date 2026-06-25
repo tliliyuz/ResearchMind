@@ -30,9 +30,7 @@ from app.pipeline.sse_bridge import (
 
 logger = logging.getLogger(__name__)
 
-# Tavily API 结果上限（对齐 RESEARCH_PIPELINE.md §3.2）
-_TAVILY_MAX_RESULTS = 5
-_TOTAL_RESULTS_LIMIT = 25
+# 搜索重试策略（config.py 未设对应项，Phase4 评估后添加）
 _SEARCH_RETRY_MAX = 2
 _SEARCH_RETRY_DELAYS = [1.0, 2.0]  # 指数退避
 
@@ -267,7 +265,7 @@ async def run_search(
                 continue
             if url in seen_urls:
                 continue
-            if len(selected_results) >= _TAVILY_MAX_RESULTS:
+            if len(selected_results) >= settings.TAVILY_MAX_RESULTS_PER_QUERY:
                 break
             seen_urls.add(url)
             r["source_sub_question"] = sq
@@ -314,8 +312,8 @@ async def run_search(
         })
 
         # 总结果截断
-        if len(all_results) >= _TOTAL_RESULTS_LIMIT:
-            logger.info("Search 达到总结果上限 %d，停止搜索: task_id=%s", _TOTAL_RESULTS_LIMIT, task_id)
+        if len(all_results) >= settings.TAVILY_TOTAL_RESULTS_LIMIT:
+            logger.info("Search 达到总结果上限 %d，停止搜索: task_id=%s", settings.TAVILY_TOTAL_RESULTS_LIMIT, task_id)
             break
 
     # 3. 全部失败检查
@@ -330,9 +328,9 @@ async def run_search(
 
     # 去重后截断
     after_dedup = len(all_results)
-    if after_dedup > _TOTAL_RESULTS_LIMIT:
-        all_results = all_results[:_TOTAL_RESULTS_LIMIT]
-        after_dedup = _TOTAL_RESULTS_LIMIT
+    if after_dedup > settings.TAVILY_TOTAL_RESULTS_LIMIT:
+        all_results = all_results[:settings.TAVILY_TOTAL_RESULTS_LIMIT]
+        after_dedup = settings.TAVILY_TOTAL_RESULTS_LIMIT
 
     output = {
         "total_results": sum(sr.get("results_count", 0) for sr in sub_results),

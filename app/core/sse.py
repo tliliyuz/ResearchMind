@@ -6,7 +6,7 @@ DocMind 侧（问答 SSE）：
 - 6 种事件类型：meta / thinking / message / sources / finish / error
 
 ResearchMind 侧（Pipeline SSE，Phase 2-3 实现）：
-- 16 种事件类型：task.* / phase.* / step.* / checkpoint.*
+- 15 种事件类型（v1.0）：task.* / phase.* / step.* / checkpoint.* + 2 种预留 [v2]
 - 15s 心跳注释帧 : ping\\n\\n，防止代理超时
 - seq 序号有序保证（ResearchMind 自行实现）
 - 重连快照 task.status.snapshot（ResearchMind 自行实现）
@@ -27,10 +27,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def format_sse_event(event_type: str, data: dict | str) -> str:
+def format_sse_event(event_type: str, data: dict | str, event_id: int | None = None) -> str:
     """格式化单个 SSE 事件为标准文本。
 
     SSE wire format：
+        id: <seq>\\n        （可选，用于客户端去重）
         event: <type>\\n
         data: <json>\\n
         \\n
@@ -38,6 +39,7 @@ def format_sse_event(event_type: str, data: dict | str) -> str:
     Args:
         event_type: 事件类型（如 phase.started / step.completed / task.progress）
         data: 事件数据，dict 会被 json.dumps 序列化
+        event_id: 可选的 seq 序号，作为 SSE id: 字段发送（用于客户端去重）
 
     Returns:
         格式化的 SSE 事件字符串
@@ -46,6 +48,8 @@ def format_sse_event(event_type: str, data: dict | str) -> str:
         data_str = json.dumps(data, ensure_ascii=False)
     else:
         data_str = data
+    if event_id is not None:
+        return f"id: {event_id}\nevent: {event_type}\ndata: {data_str}\n\n"
     return f"event: {event_type}\ndata: {data_str}\n\n"
 
 

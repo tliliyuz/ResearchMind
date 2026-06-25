@@ -68,7 +68,7 @@ export function connectSSE(url, options) {
       }
 
       // 连接成功
-      onStatusChange(retryCount > 0 ? 'connected' : 'connected')
+      onStatusChange(retryCount > 0 ? 'reconnecting' : 'connected')
       retryCount = 0
       currentDelay = retryDelay
 

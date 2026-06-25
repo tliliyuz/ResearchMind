@@ -147,8 +147,8 @@
           </span>
         </div>
 
-        <button class="cancel-btn" @click="handleCancel">
-          <i class="fas fa-ban"></i> 取消研究
+        <button class="danger-btn" :disabled="cancelLoading" @click="handleCancel">
+          <i v-if="!cancelLoading" class="fas fa-ban"></i> {{ cancelLoading ? '取消中...' : '取消研究' }}
         </button>
       </div>
     </div>
@@ -230,6 +230,7 @@ const form = reactive({
 const showAdvanced = ref(false)
 const submitting = ref(false)
 const showValidation = ref(false)
+const cancelLoading = ref(false)
 
 // ===== 研究类型元数据 =====
 const TASK_TYPES = [
@@ -361,6 +362,7 @@ async function handleCancel() {
     return
   }
 
+  cancelLoading.value = true
   try {
     await taskStore.cancelTask(taskStore.current.task_id)
     ElMessage.success('研究已取消')
@@ -372,6 +374,8 @@ async function handleCancel() {
     } else {
       ElMessage.error(err.response?.data?.message || '取消失败')
     }
+  } finally {
+    cancelLoading.value = false
   }
 }
 
@@ -655,8 +659,8 @@ onBeforeUnmount(() => {
   width: 48px;
   height: 48px;
   margin: 0 auto var(--rm-space-4);
-  background: rgba(15, 118, 110, 0.1);
-  border: 1px solid rgba(15, 118, 110, 0.2);
+  background: var(--rm-primary-light);
+  border: 1px solid var(--rm-primary-border);
   border-radius: var(--rm-radius-md);
   display: flex;
   align-items: center;
@@ -695,13 +699,13 @@ onBeforeUnmount(() => {
   color: var(--rm-danger) !important;
 }
 
-.cancel-btn {
+.danger-btn {
   margin-top: var(--rm-space-5);
   height: 32px;
-  padding: 0 16px;
-  background: rgba(225, 29, 72, 0.1);
+  padding: 0 12px;
+  background: var(--rm-danger-light);
   color: var(--rm-danger);
-  border: 1px solid rgba(225, 29, 72, 0.3);
+  border: 1px solid var(--rm-danger-border);
   border-radius: var(--rm-radius-md);
   font-size: var(--rm-text-xs);
   font-weight: var(--rm-weight-medium);
@@ -710,11 +714,17 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--rm-space-1);
   transition: all var(--rm-transition-fast);
+  flex-shrink: 0;
   font-family: inherit;
 }
 
-.cancel-btn:hover {
-  background: rgba(225, 29, 72, 0.2);
+.danger-btn:hover {
+  background: var(--rm-danger-border);
+}
+
+.danger-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ===== 完成态特有 ===== */
@@ -821,7 +831,7 @@ onBeforeUnmount(() => {
 }
 
 .back-btn:hover {
-  background: #CCFBF1;
+  background: var(--rm-primary-hover-light);
 }
 
 /* ===== 响应式：小屏三列变单列 ===== */

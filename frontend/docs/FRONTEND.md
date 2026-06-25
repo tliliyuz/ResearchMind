@@ -99,7 +99,7 @@
 |:---|:---|:---|:---|
 | 格式化工具 | `utils/format.js` | `formatDateTime()` / `formatBytes()` / `formatRelativeTime()` / `formatNumber()` / `formatDuration()` | DocMind 复制 + ResearchMind 扩展 `formatNumber`/`formatDuration` |
 | Markdown 渲染 | `utils/markdown.js` | `renderMarkdown()` / `wrapCodeBlocks()` + `[来源N]` 引用锚点 plugin | DocMind 复制 + ResearchMind 扩展引用锚点解析 |
-| SSE 解析 | `utils/sse.js` | fetch + ReadableStream + 17 种事件解析 + 5 态连接状态机（Phase 2+ 实现） | DocMind SSE 解析框架 + ResearchMind 替换全部事件处理器 |
+| SSE 解析 | `utils/sse.js` | fetch + ReadableStream + 15 种事件解析（v1.0）+ 2 种预留 [v2] + 5 态连接状态机（Phase 2+ 实现） | DocMind SSE 解析框架 + ResearchMind 替换全部事件处理器 |
 | ECharts 封装 | `composables/useECharts.js` | `useECharts()` — 响应式 resize + dispose + `setOption` 暂存 | DocMind 直接复制，零改动 |
 
 ---
@@ -840,7 +840,7 @@ POST /api/research/{task_id}/retry
 - 手动断开（离开页面/取消任务）：`reader.cancel()`
 
 **重连机制**：
-- SSE 意外断开时自动重连（指数退避：1s / 2s / 4s / 8s，最多 3 次）
+- SSE 意外断开时自动重连（指数退避：1s / 2s / 4s，最多 3 次）
 - 重连后收到 `task.status.snapshot` 事件 → 恢复完整进度 UI
 - 用户主动取消任务时不重连
 
@@ -919,7 +919,7 @@ POST /api/research/{task_id}/retry
 | 布局框架 | AppLayout + AdminLayout + Sidebar | 完全相同 | ✅ 100% |
 | 设计系统 | `--dm-*` CSS 变量 | 完全相同（改为 `--rm-*` 前缀） | ✅ 95% |
 | 核心页面 | ChatPage（对话流） | ResearchPage（任务提交+进度+报告） | ❌ 全新 |
-| SSE 协议 | 6 种事件（LLM 文本流） | 17 种事件（Pipeline 进度流） | 🔧 解析框架复用，事件处理重写 |
+| SSE 协议 | 6 种事件（LLM 文本流） | 15 种事件 v1.0 + 2 种预留 [v2]（Pipeline 进度流） | 🔧 解析框架复用，事件处理重写 |
 | 状态管理 | auth / chat / knowledge / conversation | auth / task / report | 🔧 auth 复用，其余全新 |
 | 管理后台 | 知识库/文档/Trace/用户管理 | 任务/用户管理 + 统计 | 🔧 用户管理复用，其余全新 |
 | Markdown 渲染 | 答案内容渲染 | 研究报告渲染 | ✅ 100% |
@@ -945,7 +945,7 @@ POST /api/research/{task_id}/retry
 | AdminStats | ⏳ 未开始 | 统计卡片 + ECharts 图表 | Phase 6 |
 | AdminTaskList | ⏳ 未开始 | 跨用户任务列表 + 筛选 + 取消/删除 | Phase 6 |
 | AdminUserList | ⏳ 未开始 | 用户列表 + 禁用/启用 + 重置密码 | Phase 6 |
-| SSE 解析器 | ⏳ 未开始 | fetch + ReadableStream 解析 + 17 种事件处理 | — |
+| SSE 解析器 | ⏳ 未开始 | fetch + ReadableStream 解析 + 15 种事件处理（v1.0）+ 2 种预留 [v2] | — |
 | Markdown 渲染器 | ⏳ 未开始 | markdown-it + highlight.js + `[来源N]` 锚点解析 | — |
 | 响应式适配 | ⏳ 未开始 | 1280px 断点 + Sidebar 收起 | — |
 

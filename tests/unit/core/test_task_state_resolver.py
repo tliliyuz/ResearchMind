@@ -247,14 +247,14 @@ class TestTaskStateResolver:
 class TestFatalStepErrorCodes:
     """验证 FATAL_STEP_ERROR_CODES 常量完整性"""
 
-    def test_包含全部4个不可恢复错误码(self):
+    def test_包含全部5个不可恢复错误码(self):
         assert "E3101" in FATAL_STEP_ERROR_CODES  # PlanningFailed
+        assert "E3102" in FATAL_STEP_ERROR_CODES  # SearchFailed（全部搜索失败→致命）
         assert "E3105" in FATAL_STEP_ERROR_CODES  # RerankFailed
         assert "E3106" in FATAL_STEP_ERROR_CODES  # EvidenceGraphBuildFailed
         assert "E3110" in FATAL_STEP_ERROR_CODES  # LLMAuthFailed
 
     def test_不包含可恢复错误码(self):
-        assert "E3102" not in FATAL_STEP_ERROR_CODES  # SearchBackendUnavailable → recoverable
         assert "E3104" not in FATAL_STEP_ERROR_CODES  # SynthesisFailed → recoverable
         assert "E3107" not in FATAL_STEP_ERROR_CODES  # RenderFailed → recoverable
         assert "E3108" not in FATAL_STEP_ERROR_CODES  # LLMTimeout → recoverable

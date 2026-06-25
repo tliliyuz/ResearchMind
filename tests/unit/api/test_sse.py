@@ -173,10 +173,11 @@ class TestSSEStreamEndpoint:
 
     @pytest.mark.asyncio
     async def test_SSE连接成功_返回text_event_stream(self, async_client: AsyncClient, auth_headers: dict, db_session):
-        # 由于 SSE 连接需要 Redis Pub/Sub，测试环境下我们验证端点可连接
-        # 并返回正确 Content-Type
-        # 注：真实 SSE 流需要 Redis 运行，测试环境验证基本结构
-        pass  # SSE 流测试需要 Redis，在测试环境中跳过
+        """SSE 流连接验证 → 需要 Redis Pub/Sub，单元测试环境跳过。
+
+        此测试需真实 Redis 运行，将在 tests/integration/ 中覆盖（Phase4）。
+        """
+        pytest.skip("SSE 流连接需要 Redis Pub/Sub，单元测试环境下跳过")
 
     @pytest.mark.asyncio
     async def test_stream端点权限校验_未登录返回401(self, async_client: AsyncClient):

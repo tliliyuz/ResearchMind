@@ -811,7 +811,7 @@ Report Render 输出
 
 > SSE 事件协议、wire format、心跳机制见 [API.md §4 SSE 事件协议](API.md#4-sse-事件协议)（API 真理源）。本节仅描述 Pipeline 各阶段如何映射到 SSE 事件。
 >
-> **SSE 事件发射器**：`app/pipeline/sse_stream.py`（待改造）封装 `StreamingResponse` 传输层 + 17 种事件类型发射逻辑 + `seq` 序号（保证事件有序）+ 重连快照（`task.status.snapshot`）。基于 DocMind `backend/app/services/sse_stream.py` 的 SSE 传输框架（15s `:ping` 心跳 + `event: type\ndata: json\n\n` 格式），事件类型全部替换为 ResearchMind 的 Pipeline 事件体系。
+> **SSE 事件发射器**：`app/pipeline/sse_stream.py`（待改造）封装 `StreamingResponse` 传输层 + 15 种事件类型发射逻辑（v1.0）+ 2 种预留 [v2] + `seq` 序号（保证事件有序）+ 重连快照（`task.status.snapshot`）。
 
 ```
 Pipeline 阶段推进

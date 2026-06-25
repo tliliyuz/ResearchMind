@@ -30,4 +30,4 @@ STEP_STATUS_ENUM = (
 
 # ── 来源表 ──────────────────────────────────────────────────────
 
-FETCH_STATUS_ENUM = ("success", "timeout", "blocked", "empty")
+FETCH_STATUS_ENUM = ("success", "timeout", "blocked", "empty", "dns_error")

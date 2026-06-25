@@ -20,45 +20,58 @@ from app.pipeline.fetcher import (
 
 
 class TestCheckUrlSafety:
-    """URL 安全检查：协议白名单 + IP 黑名单 SSRF 防护。"""
+    """URL 安全检查：协议白名单 + IP 黑名单 SSRF 防护。
 
-    def test_https通过(self):
-        assert _check_url_safety("https://example.com/page") is None
+    注：_check_url_safety 为私有函数，测试保留以覆盖 SSRF 安全关键路径。
+    Phase3 后应通过 run_fetch 公共 API 间接覆盖。
+    """
 
-    def test_http通过(self):
-        assert _check_url_safety("http://example.com/page") is None
+    @pytest.mark.asyncio
+    async def test_https通过(self):
+        assert await _check_url_safety("https://example.com/page") is None
 
-    def test_file协议拒绝(self):
-        result = _check_url_safety("file:///etc/passwd")
+    @pytest.mark.asyncio
+    async def test_http通过(self):
+        assert await _check_url_safety("http://example.com/page") is None
+
+    @pytest.mark.asyncio
+    async def test_file协议拒绝(self):
+        result = await _check_url_safety("file:///etc/passwd")
         assert result is not None
         assert "file" in result
 
-    def test_ftp协议拒绝(self):
-        result = _check_url_safety("ftp://example.com/file")
+    @pytest.mark.asyncio
+    async def test_ftp协议拒绝(self):
+        result = await _check_url_safety("ftp://example.com/file")
         assert result is not None
         assert "ftp" in result
 
-    def test_localhost_127_拒绝(self):
-        result = _check_url_safety("http://127.0.0.1:8080/admin")
+    @pytest.mark.asyncio
+    async def test_localhost_127_拒绝(self):
+        result = await _check_url_safety("http://127.0.0.1:8080/admin")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
-    def test_10段内网IP拒绝(self):
-        result = _check_url_safety("http://10.0.0.1/api")
+    @pytest.mark.asyncio
+    async def test_10段内网IP拒绝(self):
+        result = await _check_url_safety("http://10.0.0.1/api")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
-    def test_192_168段内网IP拒绝(self):
-        result = _check_url_safety("http://192.168.1.1/admin")
+    @pytest.mark.asyncio
+    async def test_192_168段内网IP拒绝(self):
+        result = await _check_url_safety("http://192.168.1.1/admin")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
-    def test_172_16段内网IP拒绝(self):
-        result = _check_url_safety("http://172.16.0.1/api")
+    @pytest.mark.asyncio
+    async def test_172_16段内网IP拒绝(self):
+        result = await _check_url_safety("http://172.16.0.1/api")
         assert result is not None
 
-    def test_URL缺少hostname(self):
-        result = _check_url_safety("http:///path-only")
+    @pytest.mark.asyncio
+    async def test_URL缺少hostname(self):
+        result = await _check_url_safety("http:///path-only")
         assert result is not None
 
 

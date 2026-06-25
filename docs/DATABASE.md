@@ -11,7 +11,7 @@
 
 ## 0. 时区约定
 
-> **所有 DATETIME 列均存储 UTC 时间。** 四层 UTC 统一策略（MySQL → 后端 → API → 前端）详见 [ARCHITECTURE.md §6](ARCHITECTURE.md#6-部署与运维)。
+> **所有 DATETIME 列均存储 UTC 时间。** 四层 UTC 统一策略（MySQL → 后端 → API → 前端）：底层 MySQL 存 UTC naive datetime，ORM 层 `UTCDateTime` TypeDecorator 读写转换，Pydantic 序列化为 `+00:00`，前端 `new Date()` 自动转本地时区。数据库层面实现细节见下文。
 
 `app/models/_types.py` 中的 `UTCDateTime` TypeDecorator 在 ORM 层完成 aware ↔ naive 双向转换——写入时转为 UTC 并剥离 tzinfo 存 naive UTC，读取时附加 UTC tzinfo 返回 aware datetime。Pydantic 收到 aware datetime 后自动序列化为 `2026-06-19T10:00:00+00:00`。前端 `new Date(isoString)` 自动转换为本地时区显示。底层列依然是 `DATETIME`，不需要数据迁移。
 

@@ -76,7 +76,7 @@ export const useTaskStore = defineStore('task', () => {
 
   /**
    * 获取任务历史列表
-   * @param {object} params - { page, page_size, status }
+   * @param {object} params - { page, page_size, status, keyword }
    */
   async function fetchList(params = {}) {
     listLoading.value = true
@@ -85,6 +85,7 @@ export const useTaskStore = defineStore('task', () => {
         page: params.page || 1,
         page_size: params.page_size || 20,
         status: params.status || undefined,
+        keyword: params.keyword || undefined,
       })
       const data = res.data.data
       taskList.value = data.items || []
@@ -122,6 +123,10 @@ export const useTaskStore = defineStore('task', () => {
         started_at: data.started_at || null,
         completed_at: data.completed_at || null,
       }
+      // 查看运行中任务时自动建立 SSE 连接
+      if (data.status === 'running') {
+        connectSSEToTask(taskId)
+      }
       return data
     } finally {
       loading.value = false
@@ -149,12 +154,8 @@ export const useTaskStore = defineStore('task', () => {
    */
   async function cancelTask(taskId) {
     await researchApi.cancelTask(taskId)
-    // 断开 SSE
-    disconnectSSE()
-    // 更新当前任务状态
-    if (current.value?.task_id === taskId) {
-      current.value.status = 'canceled'
-    }
+    // 不立即断开 SSE 或设置状态 —— 等待 task.canceled SSE 事件
+    // SSE 事件处理器（handleSSEEvent）会在收到事件后更新状态并断开连接
   }
 
   /**

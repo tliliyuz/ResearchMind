@@ -49,7 +49,7 @@
   - `app/core/llm.py` — 新增 `temperature` 可选参数（`chat_completion` + `stream_chat_completion`），向后兼容
   - 测试覆盖：`tests/unit/pipeline/test_planner.py`（20 用例：JSON 提取+实体计数+校验+LLM Mock 成功/重试/E3101+3 种 task_type 策略注入验证+SSE 事件）+ `tests/unit/pipeline/test_searcher.py`（12 用例：域名提取+子问题读取+正常搜索+去重+ResearchSource 创建+SSE 事件+单子问题 SKIPPED+全失败 E3102+重试恢复）+ `tests/unit/pipeline/test_fetcher.py`（15 用例：安全校验 9 场景+正常抓取+超时+403+SSRF+空正文+DNS 失败）+ `tests/unit/api/test_sse.py`（9 用例：状态快照 API 正常+404+403+401+错误信息+SSE 流权限+快照结构完整性+进度计算）+ `tests/unit/pipeline/test_integration.py`（6 用例：Planning→Search 数据流+失败阻断+Search→Fetch 持久化+全失败终止+SSE 事件序列完整性）
 - **Phase 2.3.2 Celery 异步 Pipeline 编排（ROADMAP §3.2）**——7 个源文件 + Celery 分发激活：
-  - `app/pipeline/sse_bridge.py` — SSE Bridge（~300 行）：Redis Pub/Sub 桥接 Celery Worker ↔ FastAPI ↔ SSE Stream。发布层 `SSEBridge` 类（同步 publish + seq 序号单调递增）+ 订阅层 `sse_event_stream()` 异步生成器（连接时推送 `task.status.snapshot`，循环获取 Redis 消息 yield SSE 格式事件，`stream_with_heartbeat` 包裹）。17 种 SSE 事件类型常量（`EVENT_TASK_CREATED` 等）。跨平台 Pub/Sub（Linux 原生 `redis.asyncio` / Windows `_SyncPubSubWrapper` 线程池包装）
+  - `app/pipeline/sse_bridge.py` — SSE Bridge（~300 行）：Redis Pub/Sub 桥接 Celery Worker ↔ FastAPI ↔ SSE Stream。发布层 `SSEBridge` 类（同步 publish + seq 序号单调递增）+ 订阅层 `sse_event_stream()` 异步生成器（连接时推送 `task.status.snapshot`，循环获取 Redis 消息 yield SSE 格式事件，`stream_with_heartbeat` 包裹）。15 种 SSE 事件类型常量（v1.0，`EVENT_TASK_CREATED` 等，2 种 [v2] 预留）
   - `app/services/pipeline_orchestrator.py` — Pipeline Orchestrator（~450 行）：`PipelineOrchestrator` 类，七阶段串行调度。每 Phase：创建 ResearchStep → 幂等锁检查（`acquire_step_lock_async`）→ 更新 step status→running → 发送 SSE 事件（`phase.started` / `step.started`）→ 调用 Phase handler → 更新 output + status→completed → 原子更新 `execution_context` → 发送 SSE 事件（`step.completed` / `phase.completed` / `task.progress` / `checkpoint.saved`）→ `TaskStateResolver` 检查提前终止 → 释放锁。含 `build_default_phase_handlers()` 注册表（planning/search/fetch → Phase 2 stub，rerank/synthesis/evidence_graph/render → Phase 3 待实现自动跳过）。`TaskFatalException` 不可恢复错误
   - `app/tasks/research_task.py` — Celery 任务入口（~110 行）：`@celery_app.task` 装饰的 `execute_research_task(task_id)`，`asyncio.run()` 包裹 async 逻辑。幂等检查（非 pending 状态跳过）+ 实例化 SSEBridge / TraceRecorder / Orchestrator → `orchestrator.run()` → commit。`_emergency_fail()` 兜底写入失败状态
   - `app/pipeline/planner.py` — Planning Phase stub（~40 行）：`run_planning()` 函数签名 + 返回 stub output（等待 §3.3 替换为 LLM 调用 + 输出校验 + task_type 策略注入）
@@ -84,18 +84,37 @@
   - CLAUDE.md / DEVELOPMENT.md / ROADMAP.md / README.md / TESTING_STRATEGY.md / UIDESIGN.md 的交叉引用全部更新
 
 ### Fixed
-- **S-01**: `research_tasks` 新增 `trace` JSON 列（Pipeline 七阶段 Trace 数据），对齐 trace_recorder.py 产出
-- **S-02**: `get_current_user()` 改为复用 `get_db()` session，消除每请求双 DB 连接问题；User 关联 `lazy` 改为 `noload` 避免不必要数据加载
-- **S-03**: `logout()` 新增 `user_id` 一致性校验，防止用户 A 吊销用户 B 的 refresh_token
-- **S-04**: `router/index.js` 导出 `authGuard` 函数；`routerGuards.test.js` 改为 import 真实守卫逻辑，不再复制生产代码
-- **S-05**: `LoginPage.vue` 密码框 `autocomplete` 属性随模式切换（登录 `current-password` / 注册 `new-password`）
-- **N-01**: `RequestIDMiddleware` 从 `BaseHTTPMiddleware` 改为纯 ASGI 中间件，与 AuthMiddleware 统一实现模式
-- **N-02**: `utcnow()` 重命名为 `utc_now()`，避免与 Python 3.12 弃用的 `datetime.utcnow()` 混淆；保留 `utcnow` 兼容别名
-- **N-04**: `Sidebar.vue` / `AdminLayout.vue` 硬编码颜色和尺寸改为 Design Token（`--rm-danger` / `--rm-danger-border` / `--rm-space-*`）
-- **N-09**: `index.html` Font Awesome CDN 链接添加 SRI `integrity` + `crossorigin` 属性
-- `research_steps` / `research_sources` / `evidence_items` / `report_sections` 新增 `updated_at` 列（ORM `onupdate` 自动维护）
-- `DATABASE.md` §2.2-§2.6 同步更新表结构文档
-- 测试弱断言修复：`test_auth.py` access_token 验证 JWT 结构 + expires_in 精确断言、`test_user.py` 使用 `IntegrityError` 替代裸 `Exception`、`test_llm.py` 提取共享 `mock_llm_client` fixture
+- **Phase2 代码审查修复（第一批：功能正确性阻断）**：
+  - **S1**: `pipeline_orchestrator.py:395,575` — `getattr(error, "code", None)` → `getattr(error, "error_code", None)`（AppException 属性名为 `error_code`，错误属性名导致致命错误检测全链路失效：`FATAL_STEP_ERROR_CODES` 匹配永不触发、E3101/E3110 等致命错误被降级为 warning）
+  - **S2**: `enums.py:33` — `FETCH_STATUS_ENUM` 增加 `"dns_error"`（fetcher DNS 失败时返回该值，原枚举不含会导致落库 IntegrityError）
+  - **S3**: `api/research.py:50` — `_execute_research_task.delay()` 前显式 `await db.commit()`，消除 Celery Worker 竞态窗口（对齐 CLAUDE.md 强制规则）
+  - **S12**: `frontend/src/styles/global.css` — 补定义 `--rm-welcome-icon-size: 56px;`（UIDESIGN.md 已定义但 global.css 缺失，导致欢迎图标尺寸塌缩为 ~24px）
+  - **S13**: HistoryPage 搜索关键字从未传入 API — `api/research.py` 新增 `keyword` Query 参数 + `research_service.py` 新增 `topic.ilike()` 模糊搜索 + `HistoryPage.vue` → `stores/task.js` → `api/research.js` 全链路传递 `keyword`
+- **Phase2 代码审查修复（第二批：Phase4 断点续跑前必修）**：
+  - **S4**: `pipeline_orchestrator.py` — 每 Phase 完成后显式 `await self._session.commit()`（替代仅 flush），checkpoint 状态崩溃后可恢复；`_handle_fatal_error` 兜底 commit
+  - **N1**: Task 状态更新改为 CAS（Compare-And-Swap）— `_start_task`（pending→running）、`_check_early_termination`（running→failed）、`_finalize_task`（running→终态）、`_handle_fatal_error`（running→failed）全部使用 `sa_update(ResearchTask).where(…status == old).values(…status=new)` 防并发覆盖
+  - **N2**: Phase 循环中每次进入前 `await self._session.refresh(self._task)` + 检查 `status == "canceling"` → 提前退出 Pipeline
+  - **N3**: `_run_phase` Step 创建后检查 `step.status in {"completed", "failed", "skipped"}` → 终态跳过执行（Phase4 断点续跑后生效的防御深度）
+  - **N4**: `sse.py:format_sse_event()` 新增 `event_id` 可选参数 → SSE `id:` 字段透传；`sse_bridge.py` 订阅层提取 `seq` 传入 `event_id`，客户端可基于 `id:` 去重
+- **Phase2 代码审查修复（第三批：文档一致性）**：
+  - **S5**: `API.md §3.6` — 统一 `task_status` → `status`（与代码 `_build_snapshot` 及其他端点一致）；`execution_pointer`/`last_completed_step`/`checkpoints` 标注 `[v2]` 未实现；补 `steps`/`topics`/`error`/`stats` 字段与代码同步
+  - **S6**: `app/models/research_task.py` — 补 `updated_at` 列（`UTCDateTime` + `server_default=func.current_timestamp()` + `onupdate=func.current_timestamp()`），与 `DATABASE.md §2` 定义一致；生成 Alembic 迁移 `c02701951a41`
+  - **S7**: `app/core/exceptions.py` — `E3101 PlanningFailedException` 和 `E3105 RerankFailedException` 的 `recoverable` 从 `True` 改为 `False`，与 `task_state_resolver.py` FATAL 集和 `API.md §5.3` 错误码表一致
+  - **Phase2 代码审查修复（第四批：测试与规范修复）**：
+    - **S9**: `docs/TESTING_STRATEGY.md` — 新增 Phase2 说明段落
+    - **S10**: 新建 `tests/unit/services/test_pipeline_orchestrator.py` — 9 个用例覆盖七阶段调度、幂等锁、FATAL 终止、_finalize_task 三分支
+    - **S11**: `test_sse.py:175-179` `pass` → `pytest.skip`；`test_lock.py:287-295` 补断言
+    - **N5**: `exceptions.py` — 新增 `UnknownInternalException`（E3999）
+    - **N6**: `fetcher.py` — 硬编码 `_FETCH_*` → `settings.FETCH_*`
+    - **N7**: `searcher.py` — 硬编码 `_TAVILY_*` → `settings.TAVILY_*`
+    - **N8**: `orchestrator.py` — FATAL_STEP_ERROR_CODES 导入上移到顶部
+    - **N9**: `fetcher.py` — `_check_url_safety` async 化，DNS 通过 run_in_executor
+    - **N10**: `orchestrator.py` — execution_pointer 查询实际 step 数量
+    - **N11**: `task_state_resolver.py` — E3102 加入 FATAL 集
+    - **F1-F11**: 前端规范修复（Sidebar clearCurrent / pulse 动画 / ElLoading / cancel :loading / CSS变量 / .danger-btn / auto connectSSE / 退避对齐 / 死代码 / sidebar-hover / cancelTask SSE 等待）
+    - **ROADMAP**: 更新日期→2026-06-25；函数清单/SSE描述/§3.8进度/Cancel UI 同步修正
+
+  - **S8**: SSE 事件计数全局统一为「15 种（v1.0）+ 2 种预留 [v2]」— 修改 `ROADMAP.md`（4 处）、`CHANGELOG.md`（1 处）、`CLAUDE.md`（1 处）、`TESTING_STRATEGY.md`（1 处）、`DEVELOPMENT.md`（1 处）、`FRONTEND.md`（3 处）、`RESEARCH_PIPELINE.md`（1 处）、`sse.py`（1 处）、`.claude/commands/review.md`（3 处），共 16 处
 
 ### Added
 - **测试基础设施与策略文档（ROADMAP §2.7）**：
