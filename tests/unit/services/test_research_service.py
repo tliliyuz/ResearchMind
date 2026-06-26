@@ -30,6 +30,7 @@ from app.models.research_step import ResearchStep
 from app.models.section_evidence import SectionEvidence
 from app.schemas.research import ResearchCreateRequest
 from app.services.research_service import (
+    cancel_task,
     create_task,
     get_report,
     get_task_list,
@@ -426,6 +427,56 @@ class TestDeleteTask:
         assert await db_session.get(ResearchTask, t1.id) is None
         # t2 仍在
         assert await db_session.get(ResearchTask, t2.id) is not None
+
+
+# ═══════════════════════════════════════════════════════════════
+# cancel_task()
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCancelTask:
+    """取消研究任务"""
+
+    async def test_pending任务_取消成功(self, db_session: AsyncSession):
+        task = await _seed_task(db_session, user_id=1, status="pending")
+
+        result = await cancel_task(db_session, task)
+
+        assert result.task_id == task.id
+        assert result.status == "canceled"
+        assert task.status == "canceled"
+        assert task.completed_at is not None
+
+    async def test_running任务_取消成功(self, db_session: AsyncSession):
+        task = await _seed_task(db_session, user_id=1, status="running")
+
+        result = await cancel_task(db_session, task)
+
+        assert result.status == "canceled"
+        assert task.status == "canceled"
+
+    async def test_已终态抛出E2003(self, db_session: AsyncSession):
+        for status in ["completed", "failed", "partially_completed", "canceled"]:
+            task = await _seed_task(db_session, user_id=1, status=status)
+            with pytest.raises(TaskStatusConflictException) as exc_info:
+                await cancel_task(db_session, task)
+            assert exc_info.value.error_code == "E2003"
+
+    async def test_CAS失败抛出E2003(self, db_session: AsyncSession):
+        """内存状态为 running，但 DB 已被改为 completed，CAS 失败。"""
+        task = await _seed_task(db_session, user_id=1, status="running")
+        from sqlalchemy import update as sa_update
+        await db_session.execute(
+            sa_update(ResearchTask)
+            .where(ResearchTask.id == task.id)
+            .values(status="completed")
+        )
+        await db_session.flush()
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await cancel_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
 
 
 # ═══════════════════════════════════════════════════════════════

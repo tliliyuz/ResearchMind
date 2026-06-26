@@ -12,6 +12,8 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.core.cost_tracker import calculate_cost_usd
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,12 +78,35 @@ class TraceRecorder:
         self._total_input_tokens: int = 0
         self._total_output_tokens: int = 0
         self._total_cost_usd: float = 0.0
+        self._phase_cost: dict[str, dict[str, float | int]] = {}
 
     def _span_start_iso(self, t_span_start: float) -> str:
         """将 perf_counter 时间戳转换为 ISO 8601 字符串。"""
         offset_ms = (t_span_start - self._t_start) * 1000
         dt = datetime.fromisoformat(self._created_at) + timedelta(milliseconds=offset_ms)
         return dt.isoformat(timespec="milliseconds")
+
+    def _accumulate_cost(
+        self,
+        phase: str,
+        input_tokens: int,
+        output_tokens: int,
+        model: str | None,
+    ) -> None:
+        """累加 token 与成本到 task 总计与 phase breakdown。"""
+        self._total_input_tokens += input_tokens
+        self._total_output_tokens += output_tokens
+
+        model_name = model or "unknown"
+        cost_usd = calculate_cost_usd(input_tokens, output_tokens, model_name)
+        self._total_cost_usd += cost_usd
+
+        breakdown = self._phase_cost.setdefault(phase, {
+            "tokens": 0,
+            "cost": 0.0,
+        })
+        breakdown["tokens"] = int(breakdown["tokens"]) + input_tokens + output_tokens
+        breakdown["cost"] = float(breakdown["cost"]) + cost_usd
 
     # ── 各阶段 record_* 方法 ──────────────────────────────
 
@@ -92,6 +117,7 @@ class TraceRecorder:
         output_tokens: int = 0,
         sub_questions_count: int = 0,
         retries: int = 0,
+        model: str | None = None,
         t_span_start: float | None = None,
     ) -> None:
         """记录 Planning 阶段。"""
@@ -104,9 +130,9 @@ class TraceRecorder:
             "output_tokens": output_tokens,
             "sub_questions_count": sub_questions_count,
             "retries": retries,
+            "model": model,
         }
-        self._total_input_tokens += input_tokens
-        self._total_output_tokens += output_tokens
+        self._accumulate_cost("planning", input_tokens, output_tokens, model)
 
     def record_search(
         self,
@@ -160,6 +186,7 @@ class TraceRecorder:
         input_tokens: int = 0,
         output_tokens: int = 0,
         retries: int = 0,
+        model: str | None = None,
         t_span_start: float | None = None,
     ) -> None:
         """记录 Rerank 阶段（BM25 粗筛 + LLM 精排）。"""
@@ -173,9 +200,9 @@ class TraceRecorder:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "retries": retries,
+            "model": model,
         }
-        self._total_input_tokens += input_tokens
-        self._total_output_tokens += output_tokens
+        self._accumulate_cost("rerank", input_tokens, output_tokens, model)
 
     def record_synthesis(
         self,
@@ -186,6 +213,7 @@ class TraceRecorder:
         conflicts_count: int = 0,
         knowledge_gaps_count: int = 0,
         retries: int = 0,
+        model: str | None = None,
         t_span_start: float | None = None,
     ) -> None:
         """记录 Synthesis 阶段（跨源综合）。"""
@@ -200,9 +228,9 @@ class TraceRecorder:
             "conflicts_count": conflicts_count,
             "knowledge_gaps_count": knowledge_gaps_count,
             "retries": retries,
+            "model": model,
         }
-        self._total_input_tokens += input_tokens
-        self._total_output_tokens += output_tokens
+        self._accumulate_cost("synthesis", input_tokens, output_tokens, model)
 
     def record_evidence_graph(
         self,
@@ -229,6 +257,7 @@ class TraceRecorder:
         sections_count: int = 0,
         citations_count: int = 0,
         retries: int = 0,
+        model: str | None = None,
         t_span_start: float | None = None,
     ) -> None:
         """记录 Report Render 阶段。"""
@@ -242,9 +271,9 @@ class TraceRecorder:
             "sections_count": sections_count,
             "citations_count": citations_count,
             "retries": retries,
+            "model": model,
         }
-        self._total_input_tokens += input_tokens
-        self._total_output_tokens += output_tokens
+        self._accumulate_cost("render", input_tokens, output_tokens, model)
 
     # ── 错误与完成 ─────────────────────────────────────────
 
@@ -286,6 +315,7 @@ class TraceRecorder:
             "total_duration_ms": total_duration_ms,
             "total_input_tokens": self._total_input_tokens,
             "total_output_tokens": self._total_output_tokens,
+            "total_tokens": self._total_input_tokens + self._total_output_tokens,
             "total_cost_usd": round(self._total_cost_usd, 6),
             "phases": {
                 "planning": self._planning_data,
@@ -297,6 +327,7 @@ class TraceRecorder:
                 "render": self._render_data,
             },
             "phase_durations_ms": phase_durations,
+            "breakdown": self._phase_cost,
             "error_message": self._error_message,
             "created_at": self._created_at,
         }

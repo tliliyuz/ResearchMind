@@ -8,16 +8,21 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select as sa_select
 
+from app.core.security import hash_password
 from app.core.task_state_resolver import FATAL_STEP_ERROR_CODES
+from app.core.trace_recorder import TraceRecorder
 from app.models.enums import TASK_PHASE_ENUM, STEP_TYPE_ENUM
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
+from app.models.user import User
 from app.pipeline.sse_bridge import (
     EVENT_STEP_COMPLETED,
     EVENT_STEP_FAILED,
     EVENT_STEP_SKIPPED,
     EVENT_STEP_STARTED,
+    EVENT_TASK_CANCELED,
     EVENT_TASK_COMPLETED,
     EVENT_TASK_FAILED,
     EVENT_TASK_PROGRESS,
@@ -80,6 +85,19 @@ def _make_phase_handler(should_fail: bool = False, error: Exception = None):
     return handler
 
 
+def _configure_async_mock_session(session: AsyncMock) -> None:
+    """配置 AsyncMock session，使 _create_step 中的复用查询返回 None。
+
+    默认 AsyncMock 的 scalar_one_or_none() 被 await 后会返回 AsyncMock 实例，
+    导致 _create_step 误判为"复用已有 Step"。生产环境无此问题（真实 DB 返回 None
+    或 ResearchStep 实例），此处仅为 Mock 测试做一致性配置。
+
+    同时默认 rowcount=1，避免 CAS 更新后把 AsyncMock 当整数比较失败。
+    """
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    session.execute.return_value.rowcount = 1
+
+
 # ═══════════════════════════════════════════════════════════════
 # Phase 顺序与调度
 # ═══════════════════════════════════════════════════════════════
@@ -109,6 +127,7 @@ class TestPhaseOrder:
         """已注册 handler 的 phase 按 PHASE_ORDER 顺序被调用。"""
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         sse_bridge = MagicMock()
         sse_bridge.task_id = str(task.id)
 
@@ -137,6 +156,7 @@ class TestPhaseOrder:
         """未注册 handler 的 phase → _skip_phase 被调用且不抛异常。"""
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         sse_bridge = MagicMock()
         sse_bridge.task_id = str(task.id)
 
@@ -208,6 +228,7 @@ class TestFatalErrorTermination:
 
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         sse_bridge = MagicMock()
         sse_bridge.task_id = str(task.id)
         handlers = {
@@ -243,6 +264,7 @@ class TestFatalErrorTermination:
         task = _make_task()
         task.execution_context = {"last_completed_step_id": "some-step-uuid"}
         session = AsyncMock()
+        _configure_async_mock_session(session)
         sse_bridge = MagicMock()
         sse_bridge.task_id = str(task.id)
 
@@ -330,6 +352,7 @@ class TestFinalizeTask:
 
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         sse_bridge = MagicMock()
         sse_bridge.task_id = str(task.id)
         handlers = {
@@ -353,3 +376,305 @@ class TestFinalizeTask:
             if c[0][0] == EVENT_TASK_FAILED
         ]
         assert len(failed_calls) >= 1
+
+
+# ═══════════════════════════════════════════════════════════════
+# 取消检测
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCancelDetection:
+    """Orchestrator 检测到 status=canceled 后停止并发送 task.canceled。"""
+
+    @pytest.mark.asyncio
+    async def test_任务已取消_发送task_canceled事件(self):
+        task = _make_task(status="canceled")
+        session = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        # refresh 后 task.status 仍为 canceled
+        async def _refresh(task_obj, attrs=None):
+            return None
+        session.refresh.side_effect = _refresh
+
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(), phase_handlers={},
+        )
+
+        await orchestrator.run()
+
+        canceled_calls = [
+            c for c in sse_bridge.publish.call_args_list
+            if c[0][0] == EVENT_TASK_CANCELED
+        ]
+        assert len(canceled_calls) == 1
+        payload = canceled_calls[0][0][1]
+        assert payload["task_id"] == str(task.id)
+        assert payload["status"] == "canceled"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 成本追踪
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCostTracking:
+    """Step cost 写入与 Trace 聚合。"""
+
+    @pytest.mark.asyncio
+    async def test_complete_step_写入step_cost(self):
+        from app.core.trace_recorder import TraceRecorder
+
+        task = _make_task()
+        session = AsyncMock()
+        session.refresh = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        # 构造真实 ResearchStep，便于断言 cost 字段
+        step = ResearchStep(
+            id="step-cost-001",
+            task_id=task.id,
+            step_type="planning",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        trace = TraceRecorder(task_id=str(task.id), user_id=1, topic="测试")
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=trace, phase_handlers={},
+        )
+
+        output = {
+            "sub_questions": ["q1", "q2"],
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "model": "deepseek-v4-pro",
+            "retry_count": 0,
+        }
+        await orchestrator._complete_step(step, "planning", output)
+
+        assert step.cost is not None
+        assert step.cost["input_tokens"] == 1000
+        assert step.cost["output_tokens"] == 200
+        assert step.cost["model"] == "deepseek-v4-pro"
+        assert step.cost["estimated_cost_usd"] > 0
+
+    @pytest.mark.asyncio
+    async def test_complete_step_非LLM阶段不写入cost(self):
+        from app.core.trace_recorder import TraceRecorder
+
+        task = _make_task()
+        session = AsyncMock()
+        session.refresh = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        step = ResearchStep(
+            id="step-cost-002",
+            task_id=task.id,
+            step_type="search",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        trace = TraceRecorder(task_id=str(task.id), user_id=1, topic="测试")
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=trace, phase_handlers={},
+        )
+
+        await orchestrator._complete_step(step, "search", {"after_dedup": 5})
+
+        assert step.cost is None
+
+    @pytest.mark.asyncio
+    async def test_trace_聚合各LLM阶段成本(self):
+        from app.core.trace_recorder import TraceRecorder
+
+        trace = TraceRecorder(task_id="task-trace-001", user_id=1, topic="测试")
+        trace.record_planning(
+            duration_ms=1000,
+            input_tokens=1000,
+            output_tokens=200,
+            sub_questions_count=3,
+            model="deepseek-v4-pro",
+        )
+        trace.record_rerank(
+            duration_ms=2000,
+            bm25_candidates=10,
+            llm_reranked=5,
+            input_tokens=2000,
+            output_tokens=300,
+            model="deepseek-v4-flash",
+        )
+        trace.record_synthesis(
+            duration_ms=3000,
+            input_tokens=5000,
+            output_tokens=1000,
+            clusters_count=2,
+            model="deepseek-v4-pro",
+        )
+        trace.record_render(
+            duration_ms=4000,
+            input_tokens=3000,
+            output_tokens=1500,
+            sections_count=3,
+            model="deepseek-v4-pro",
+        )
+
+        result = trace.finish()
+
+        assert result["total_input_tokens"] == 11000
+        assert result["total_output_tokens"] == 3000
+        assert result["total_tokens"] == 14000
+        assert result["total_cost_usd"] > 0
+        assert "planning" in result["breakdown"]
+        assert "rerank" in result["breakdown"]
+        assert "synthesis" in result["breakdown"]
+        assert "render" in result["breakdown"]
+        assert result["breakdown"]["planning"]["tokens"] == 1200
+        assert result["breakdown"]["planning"]["cost"] > 0
+        assert result["phases"]["planning"]["model"] == "deepseek-v4-pro"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 真实 DB session 集成验证
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestPipelineWithRealSession:
+    """使用真实 DB session 验证 Pipeline 完成后 Task 状态正确流转。"""
+
+    @pytest.mark.asyncio
+    async def test_全部phase完成后_task状态变为completed(self, db_session):
+        """全部 7 个 phase handler 成功执行后，task status 应从 running 变为 completed。"""
+        user = User(
+            username="pipeline-real-session",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="真实 session 测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        handlers = {phase: _make_phase_handler() for phase in PHASE_ORDER}
+
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+        trace_recorder = TraceRecorder(
+            task_id=str(task.id), user_id=str(user.id), topic=task.topic
+        )
+
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=trace_recorder,
+            phase_handlers=handlers,
+        )
+
+        # 阻止内部 commit，避免破坏测试事务隔离；所有写操作仍在同一事务内可见
+        with patch.object(db_session, "commit", new_callable=AsyncMock):
+            with patch("app.services.pipeline_orchestrator.acquire_step_lock_async", return_value=True):
+                with patch("app.services.pipeline_orchestrator.release_step_lock_async"):
+                    await orchestrator.run()
+
+        # 在同一未提交事务内查询验证 CAS 更新结果
+        result = await db_session.execute(
+            sa_select(ResearchTask).where(ResearchTask.id == task.id)
+        )
+        updated_task = result.scalar_one()
+        assert updated_task.status == "completed"
+
+        completed_calls = [
+            c for c in sse_bridge.publish.call_args_list
+            if c[0][0] == EVENT_TASK_COMPLETED
+        ]
+        assert len(completed_calls) == 1
+        assert completed_calls[0][0][1]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_复用research_service创建的pending_planning_step(self, db_session):
+        """research_service 预先创建的 pending planning step 应被复用并完成。"""
+        user = User(
+            username="pipeline-reuse-planning",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="复用 planning step 测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="running",
+            total_steps=1,
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        # 模拟 research_service 预先创建的 pending planning step
+        planning_step = ResearchStep(
+            task_id=task.id,
+            step_type="planning",
+            status="pending",
+            label="Planning：拆解研究主题",
+        )
+        db_session.add(planning_step)
+        await db_session.flush()
+
+        handlers = {phase: _make_phase_handler() for phase in PHASE_ORDER}
+
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+        trace_recorder = TraceRecorder(
+            task_id=str(task.id), user_id=str(user.id), topic=task.topic
+        )
+
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=trace_recorder,
+            phase_handlers=handlers,
+        )
+
+        with patch.object(db_session, "commit", new_callable=AsyncMock):
+            with patch("app.services.pipeline_orchestrator.acquire_step_lock_async", return_value=True):
+                with patch("app.services.pipeline_orchestrator.release_step_lock_async"):
+                    await orchestrator.run()
+
+        # 验证只存在一个 planning step，且它由 pending 转为 completed
+        result = await db_session.execute(
+            sa_select(ResearchStep)
+            .where(ResearchStep.task_id == task.id, ResearchStep.step_type == "planning")
+            .order_by(ResearchStep.started_at)
+        )
+        planning_steps = result.scalars().all()
+        assert len(planning_steps) == 1
+        assert planning_steps[0].id == planning_step.id
+        assert planning_steps[0].status == "completed"
+
+        # 验证 task 状态变为 completed
+        result = await db_session.execute(
+            sa_select(ResearchTask).where(ResearchTask.id == task.id)
+        )
+        updated_task = result.scalar_one()
+        assert updated_task.status == "completed"

@@ -19,6 +19,7 @@ from app.models.research_step import ResearchStep
 from app.pipeline.sse_bridge import sse_event_stream
 from app.schemas.research import ResearchCreateRequest
 from app.services.research_service import (
+    cancel_task,
     create_task,
     delete_task,
     get_report,
@@ -103,6 +104,21 @@ async def delete_research_task(
     """
     await delete_task(db, task)
     return {"code": "0", "message": "研究任务已删除", "data": None}
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_research_task(
+    task: ResearchTask = Depends(require_task_accessible),
+    db: AsyncSession = Depends(get_db),
+):
+    """取消研究任务（需登录，仅 owner 或 admin）。
+
+    对齐 API.md §3.2 POST /api/research/{task_id}/cancel。
+    API 层直接 CAS 更新 task.status=canceled；Orchestrator 在 Phase 边界检测
+    canceled 状态后停止并发送 task.canceled SSE 事件。
+    """
+    result = await cancel_task(db, task)
+    return {"code": "0", "message": "任务已取消", "data": result.model_dump()}
 
 
 @router.get("/{task_id}/stream")

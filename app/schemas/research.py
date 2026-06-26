@@ -133,6 +133,13 @@ class ResearchCreateResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间（ISO 8601 UTC）")
 
 
+class ResearchCancelResponse(BaseModel):
+    """取消研究任务响应 — 对齐 API.md §3.2 POST /api/research/{task_id}/cancel。"""
+
+    task_id: str = Field(..., description="任务 UUID")
+    status: str = Field(..., description="取消后的状态，固定为 canceled")
+
+
 # ── 报告相关 Schema（对齐 API.md §3.3）───────────────────────────
 
 

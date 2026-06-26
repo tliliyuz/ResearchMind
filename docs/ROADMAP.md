@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-25 |
+| 最后更新 | 2026-06-26 |
 
 > 本文档是 **开发排期、Phase 顺序、任务依赖关系** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。
 
@@ -38,7 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
-> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ⏳ | §4.6 成本追踪 ⏳ | §4.7 前端运行态/完成态 ⏳。
+> Phase 3 🔲 进行中：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ✅ | §4.6 成本追踪 ✅ | §4.7 前端运行态/完成态 ⏳。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -324,15 +324,15 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Cancel API | `POST /api/research/{task_id}/cancel` — 仅 `pending`/`running` 可取消，设置 `status=canceled`，Worker 下一 Step 前检查并停止 |
-| ⏳ | Cancel 状态校验 | 已终态（completed/failed/partially_completed/canceled）→E2003 |
+| ✅ | Cancel API | `POST /api/research/{task_id}/cancel` — 仅 `pending`/`running` 可取消，CAS 更新 `status=canceled` + `completed_at`；Worker 在下一 Phase 前检测 `status=canceled` 后停止并发送 `task.canceled` |
+| ✅ | Cancel 状态校验 | 已终态（completed/failed/partially_completed/canceled）→E2003 |
 
 ### 4.6 [后端] 成本追踪
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Cost Tracker | `app/core/cost_tracker.py` — 每 Step 完成时从 DeepSeek API `usage` 对象提取 `input_tokens`/`output_tokens` → 写入 `research_steps` |
-| ⏳ | Task 级成本聚合 | `task.trace.total_tokens` + `task.trace.total_cost_usd` + `task.trace.breakdown`（按 Phase 分拆） |
+| ✅ | Cost Tracker | `app/core/cost_tracker.py` — DeepSeek 模型定价字典 + `calculate_cost_usd()` 按 cache miss 单价计算 + `extract_step_cost()` 从 Step output 提取 token/model/cost；Orchestrator `_complete_step()` 在 Step 完成后设置 `step.cost` |
+| ✅ | Task 级成本聚合 | `TraceRecorder` 新增 `_phase_cost`/`_accumulate_cost()`，为 planning/rerank/synthesis/render 埋点；`finish()` 输出 `total_tokens`/`total_cost_usd`/`breakdown` |
 
 > **成本追踪**：[RESEARCH_PIPELINE.md §11](RESEARCH_PIPELINE.md#11-成本追踪与-token-预算)。
 
@@ -375,8 +375,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Evidence Graph Build 测试 | 单元测试 | 数据导入完整性 / items 排序 / cluster 写回 / sources 聚合 / 空输入处理 / E3106 触发条件 |
 | ✅ | Report Render 测试 | 单元测试 | 模板选择（3 种 task_type）/ LLM 渲染 Mock / `[来源N]` 正则提取 / `sources[]` 去重排序 / 引用缺失标记 / E3107 |
 | ✅ | Report API 接口测试 | 接口测试 | `GET /api/research/{task_id}/report` 完整 JSON 结构校验（`report.sections[]` + `evidence_graph` + `trace`）+ E2001/E2002/E2003 |
-| ⏳ | Cancel API 接口测试 | 接口测试 | `POST /api/research/{task_id}/cancel` 正常取消 + E2003（已终态）+ E2001/E2002 |
-| ⏳ | 成本追踪测试 | 单元测试 | DeepSeek `usage` 对象解析 / Step 级 token 写入 / Task 级成本聚合 / `total_cost_usd` 计算 |
+| ✅ | Cancel API 接口测试 | 接口测试 | `POST /api/research/{task_id}/cancel` 正常取消 + E2003（已终态）+ E2001/E2002 |
+| ✅ | 成本追踪测试 | 单元测试 | DeepSeek `usage` 对象解析 / Step 级 token 写入 / Task 级成本聚合 / `total_cost_usd` 计算 |
 | ⏳ | Pipeline 端到端集成测试（全链路） | 集成测试 | 全 7 阶段 Mock 跑通（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）+ SSE 事件序列完整 + Report 产出验证 |
 | ⏳ | 人工报告质量评估（第 1 轮） | 人工评估 | 3 task_type × 3 主题 = 9 题，4 维度评分（结构完整性/引用准确性/综合质量/可读性），建立基线 |
 | ⏳ | 离线 Pipeline 评估 | 检索评估 | Search Recall / Fetch 成功率 / Rerank 相关性 量化指标脚本 |
@@ -450,7 +450,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
 | ⏳ | Retry UI | 失败视图 `recoverable=true` 时「断点续跑」按钮 → `ElMessageBox.confirm` 确认 → `POST /api/research/{task_id}/retry` → 成功(202)→自动切换到运行态→重连 SSE |
-| ✅ | Cancel UI | Phase2 已实现：运行态「取消研究」按钮 → `ElMessageBox.confirm` → `POST /api/research/{task_id}/cancel` → SSE 收到 `task.canceled` → 切换到取消视图。失败→`ElMessage.error`。后端 Cancel API 在 Phase3 §4.5 ⏳ |
+| ✅ | Cancel UI | Phase2 已实现前端交互：运行态「取消研究」按钮 → `ElMessageBox.confirm` → `POST /api/research/{task_id}/cancel` → SSE 收到 `task.canceled` → 切换到取消视图。后端 Cancel API 已在 Phase3 §4.5 完成 |
 | ⏳ | Sidebar 会话入口适配 | 历史任务区域展示空态（无任务时），点击「新建研究」按钮清空当前任务→切换到创建态，「历史任务」链接高亮路由 `/history` |
 
 ### 5.4 🚫 本阶段不做的

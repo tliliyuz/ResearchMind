@@ -11,7 +11,7 @@
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy import select, func, delete as sa_delete, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -35,6 +35,7 @@ from app.schemas.research import (
     ReportSectionSchema,
     ReportSectionSourceSchema,
     ReportSourceSchema,
+    ResearchCancelResponse,
     ResearchCreateRequest,
     ResearchCreateResponse,
     ResearchReportResponse,
@@ -388,6 +389,50 @@ def _build_progress(task: ResearchTask) -> ProgressSchema:
         total_steps=total,
         progress=round(progress, 2),
     )
+
+
+# ── 取消任务 ────────────────────────────────────────────────────
+
+
+TERMINAL_STATUSES: frozenset[str] = frozenset({
+    "completed", "failed", "partially_completed", "canceled"
+})
+
+
+async def cancel_task(
+    db: AsyncSession,
+    task: ResearchTask,
+) -> ResearchCancelResponse:
+    """取消研究任务。
+
+    对齐 API.md §3.2 POST /api/research/{task_id}/cancel：
+    - 终态校验：completed / failed / partially_completed / canceled 抛 E2003
+    - CAS 更新：仅当 status 为 pending / running 时才可取消
+    - CAS 失败意味着并发状态变更，同样抛 E2003
+
+    注意：本函数不提交事务，由 API 层依赖注入的 get_db 统一提交。
+    """
+    if task.status in TERMINAL_STATUSES:
+        raise TaskStatusConflictException(detail="任务已处于终态，无法取消")
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        sa_update(ResearchTask)
+        .where(
+            ResearchTask.id == task.id,
+            ResearchTask.status.in_(["pending", "running"]),
+        )
+        .values(status="canceled", completed_at=now)
+    )
+    if result.rowcount == 0:
+        raise TaskStatusConflictException(detail="任务状态已变更，无法取消")
+
+    # 同步内存对象，避免后续读取到旧状态
+    task.status = "canceled"
+    task.completed_at = now
+
+    logger.info("研究任务已取消: task_id=%s", task.id)
+    return ResearchCancelResponse(task_id=task.id, status="canceled")
 
 
 # ── 删除任务 ────────────────────────────────────────────────────

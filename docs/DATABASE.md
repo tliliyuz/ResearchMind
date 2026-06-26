@@ -192,6 +192,9 @@ CREATE TABLE research_steps (
     error_code      VARCHAR(50) DEFAULT NULL,
     error_message   TEXT DEFAULT NULL,
 
+    -- 成本
+    cost            JSON DEFAULT NULL,                          -- Step 级成本：{input_tokens, output_tokens, estimated_cost_usd, model}
+
     -- 性能
     duration_ms     INT DEFAULT NULL,                           -- 执行耗时
 
@@ -222,6 +225,7 @@ CREATE TABLE research_steps (
 | max_retries | INT | 最大重试次数（0 = 使用阶段默认值） |
 | error_code | VARCHAR(50) | 错误码 |
 | error_message | TEXT | 错误详情 |
+| cost | JSON | Step 级成本：`{input_tokens, output_tokens, estimated_cost_usd, model}`，仅 LLM 阶段写入 |
 | duration_ms | INT | 执行耗时（毫秒） |
 | started_at | DATETIME | 开始时间（UTC） |
 | completed_at | DATETIME | 完成时间（UTC） |

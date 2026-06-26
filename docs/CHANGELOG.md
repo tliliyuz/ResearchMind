@@ -16,9 +16,31 @@
 > Phase 2.3.3-§3.6 Pipeline 前半段完成：Planning（LLM）+ Search（Tavily）+ Fetch（HTTP+trafilatura）+ SSE 端点（ROADMAP §3.3-§3.6 ✅）。
 > Phase 2 §3.7 前端实现完成：ResearchPage + HistoryPage + Sidebar 历史任务 + SSE 框架（ROADMAP §3.7 ✅）。
 > Phase 2 §3.9 测试完成：Celery 幂等锁 + 5 个前端测试全绿，Phase 2 全部关闭准入 Phase 3（ROADMAP §3.9 ✅）。
-> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅。
+> Phase 3 §4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel 基础实现 ✅ | §4.6 成本追踪 ✅。
 
 ### Added
+- **Phase 3 §4.6 成本追踪实现（ROADMAP §4.6 / RESEARCH_PIPELINE §11.2）**——LLM token 成本写入 Step 并聚合到 Task Trace：
+  - `app/core/cost_tracker.py` — 新建成本计算模块：维护 DeepSeek 模型定价字典（`deepseek-v4-pro` / `deepseek-v4-flash`），`calculate_cost_usd()` 按 cache miss 单价计算并保留 6 位小数，`extract_step_cost()` 从 Step output 提取 token / model / cost（兼容 `prompt_tokens`/`completion_tokens` 与 `usage.*` 备选路径）
+  - `app/models/research_step.py` — 新增 `cost` JSON 列，结构 `{input_tokens, output_tokens, estimated_cost_usd, model}`
+  - `alembic/versions/fd49212435a6_research_steps_新增_cost_列.py` — 新增迁移脚本，为 `research_steps` 表添加 `cost` 列
+  - `app/core/trace_recorder.py` — 扩展成本聚合：新增 `_phase_cost` 与 `_accumulate_cost()`，为 `record_planning` / `record_rerank` / `record_synthesis` / `record_render` 增加 `model` 参数并累加 token / cost；`finish()` 输出新增 `total_tokens` / `total_cost_usd` / `breakdown`
+  - `app/services/pipeline_orchestrator.py` — `_complete_step()` 在 Step output 写入后、flush 前设置 `step.cost`；扩展现有 render-only 埋点，为 planning / rerank / synthesis / render 四个 LLM 阶段分别调用对应 `record_*` 方法
+  - `docs/DATABASE.md` §2.3 — 更新 `research_steps` 表 DDL 与字段说明，新增 `cost JSON` 定义
+  - 测试覆盖：`tests/unit/core/test_cost_tracker.py`（4 用例）+ `tests/unit/services/test_pipeline_orchestrator.py`（追加 Step cost 写入与 Trace 聚合断言）
+
+- **Phase 3 §4.5 Cancel 基础实现（ROADMAP §4.5 / API.md §3.2）**——任务取消接口与 Orchestrator 检测修复：
+  - `app/api/research.py` — 新增 `POST /api/research/{task_id}/cancel` 端点，返回 `{task_id, status: "canceled"}`，错误码 E2001/E2002/E2003
+  - `app/services/research_service.py` — 新增 `cancel_task()`：终态校验（completed/failed/partially_completed/canceled）抛 E2003；CAS 更新 `status=canceled` + `completed_at`；CAS 失败同样抛 E2003
+  - `app/schemas/research.py` — 新增 `ResearchCancelResponse` Schema
+  - `app/services/pipeline_orchestrator.py` — 修复取消检测：Phase 循环检查 `status == "canceled"`（而非不存在的 `"canceling"`），发送 `EVENT_TASK_CANCELED` 并补设 `completed_at`
+  - 测试覆盖：`tests/unit/api/test_research.py` + `tests/unit/services/test_research_service.py`（追加 cancel 正常/终态冲突/权限/admin/CAS 并发共 8+ 用例）
+
+### Changed
+- **Phase 3 §4.5/§4.6 实现偏差标注 `[Deviation]`**：
+  - Cancel 不引入 `canceling` 中间态：API 直接 CAS 更新 `status=canceled`，Orchestrator 在 Phase 边界检测 `canceled` 后停止（API.md §3.2 原述"Worker 收到中断信号后保存当前 checkpoint"，MVP 简化为在下一 Phase 前停止）
+  - 成本追踪 MVP 仅计入 LLM token 成本：Search（Tavily）/ Fetch（HTTP）等第三方服务成本暂不计入 `total_cost_usd`，与 RESEARCH_PIPELINE.md §11.2 "Search/Fetch 成本计入 total_cost_usd" 不同
+  - DeepSeek 定价使用 cache miss 价格作为保守估算
+
 - **Phase 3 §4.4 Report Render 阶段实现（ROADMAP §4.4 / RESEARCH_PIPELINE §8）**——Evidence Graph 渲染为 Markdown 报告：
   - `app/pipeline/renderer.py` — Report Render 阶段完整实现（~360 行）：从最新 completed Evidence Graph Step 读取 `output["graph"]`；按 `task_type` 选择模板（`comparison_v1` / `explainer_v1` / `analysis_v1`）；构建 System Prompt（含 topic/task_type/language/模板说明/证据图谱摘要/证据详情）；调用 `deepseek-v4-pro`（`deep_thinking=False`，`temperature=0.5`，`max_tokens=8000`）；从 LLM 输出提取 JSON 并解析为 `RenderSection` 列表；正则提取正文 `[来源N]` 引用，按 `GraphItem.index` 映射到 `source_id` + `evidence_index`，去重排序后持久化到 `report_sections` 与 `section_evidence`；更新 `evidence_items.used_in_sections`；失败策略：LLM 调用/JSON 解析失败重试 1 次（`settings.PIPELINE_RENDER_MAX_RETRIES`），耗尽 → `RenderFailedException(E3107, recoverable=True)`；Section 数量不足不阻断；无引用/非法引用章节标记 `citation_issues=True`；返回 `sections_count`/`citations_count`/`template`/`model`/`retry_count`/`prompt_tokens`/`completion_tokens`/`duration_ms`/`citation_issues`
   - `app/pipeline/evidence_graph.py` — `GraphItem` 新增 `evidence_item_id` 字段并在 `to_dict()` 输出，供 Render 阶段直接更新 `evidence_items.used_in_sections`
@@ -31,8 +53,11 @@
   - `tests/unit/services/test_research_service.py` — 追加 `get_report` Service 测试（4 用例：completed 返回完整报告 / partially_completed 可获取 / running→E2003 / 无 Evidence Graph Step→E2003）
 
 ### Fixed
+- **修复 Pipeline 完成后 Task 状态卡在 `running` 的问题**：根因是 `app/services/research_service.py` 在创建任务时已写入一个 `status=pending` 的首个 `planning` Step，但 `app/services/pipeline_orchestrator.py::_run_phase()` 每次执行 planning 时又调用 `_create_step()` 新建一个 planning Step，导致 research_service 预先创建的 Step 永远停留在 `pending`。`TaskStateResolver._all_steps_terminal()` 要求全部 Step 进入终态，这个遗留的 pending Step 使 Resolver 误判为“还有步骤未终态”，最终 CAS 把 task status 写回 `running`。修复后 `_create_step()` 优先查询并复用同一任务同一 phase 下 `status IN ('pending', 'running')` 的已有 Step（按 `started_at` 升序，pending 的 NULL 在最前），无匹配时才新建 Step；这样即可复用 research_service 预先创建的 planning Step，也覆盖 Worker 断点续跑 / 异常重启后遗留的非终态 Step。同步保留 `_load_task_steps()` 显式查询 `research_steps` 表 + `execution_options(populate_existing=True)`，确保 identity map 中过期的 Step 对象被 DB 最新值覆盖；新增 `tests/unit/services/test_pipeline_orchestrator.py::TestPipelineWithRealSession::test_复用research_service创建的pending_planning_step` 真实 DB session 集成测试，验证预先存在的 pending planning Step 被复用且 Task 最终变为 `completed`
 - **修复 Celery Worker 事件循环冲突导致的 `Future attached to a different loop`**：`app/tasks/research_task.py` 中 `execute_research_task` 不再使用 `asyncio.run()`（每次任务新建/关闭事件循环），改为通过 `_get_worker_loop()` 获取或创建当前 Worker 进程的持久事件循环，使用 `loop.run_until_complete()` 执行异步 Pipeline；避免 SQLAlchemy async engine 连接池复用旧连接时 Future 绑定到已关闭 loop 的问题
 - **`docs/RESEARCH_PIPELINE.md` §8.4 引用锚点示例 [Deviation]**：明确正文中 `[来源N]` 的 `N` 使用 0-based `GraphItem.index`（与 `API.md §3.3` 及前端 `markdown.js` 解析一致），修正原示例中 `[来源1]` 映射到 `evidence_index: 0` 的表述；`section.sources[].id` 仍为 `research_sources.id`，`section.sources[].evidence_index` 存储 `GraphItem.index`
+- **修复 Fetch 阶段 `dns_error` 写入 `research_sources.fetch_status` 触发 MySQL `DataError (1265)`**：`app/models/enums.py` 已含 `dns_error`，但数据库层 MySQL ENUM 仍只有 `success/timeout/blocked/empty`。新增 `alembic/versions/8ab6268d8077_research_sources_fetch_status_枚举扩展_dns_.py` 迁移脚本，通过 `op.alter_column` 将 `fetch_status` ENUM 扩展为 `success/timeout/blocked/empty/dns_error`，与模型、设计文档 `DATABASE.md §2.4` 对齐
+- **修复致命错误处理路径上的 `MissingGreenlet` 导致 task 状态无法写入 `failed`**：当 Fetch 等阶段先抛出 `DataError` 使 session 进入 `PendingRollbackError` 后，原 `_handle_fatal_error()` 在 `rollback()` 之后仍访问 `self._task.id`，触发 ORM 懒加载；Celery Worker 运行在同步 greenlet 中，懒加载调用 `await_only()` 抛出 `MissingGreenlet`，导致 `failed` 状态写入失败。修复后 `_handle_fatal_error()` 在 rollback 前即捕获 `task_id` 变量，后续所有日志 / CAS 更新 / 状态查询均使用 `task_id`，不再访问 `self._task`；`_start_task()` 同步采用相同模式；CAS 失败时改为显式 `select status` 而非 `refresh(self._task)`，避免对象过期触发懒加载
 
 ### Fixed
 - **修复 MySQL 不兼容 `NULLS LAST` 导致 Synthesis / Evidence Graph Build 阶段 `ProgrammingError (1064)`**：

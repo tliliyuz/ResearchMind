@@ -408,6 +408,92 @@ class TestDeleteResearchAPI:
         assert response.json()["code"] == "E2002"
 
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/research/{task_id}/cancel — 取消任务
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCancelResearchAPI:
+    """POST /api/research/{task_id}/cancel"""
+
+    async def _seed_task(self, db_session: AsyncSession, status: str, user_id: int = 1, task_id: str | None = None) -> ResearchTask:
+        task = ResearchTask(
+            id=task_id or "task-cancel-001",
+            user_id=user_id,
+            topic="待取消任务",
+            requirements={"task_type": "analysis"},
+            status=status,
+        )
+        db_session.add(task)
+        await db_session.flush()
+        return task
+
+    async def test_pending任务_取消成功返回200(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_task(db_session, status="pending", task_id="task-cancel-pending")
+
+        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["message"] == "任务已取消"
+        assert data["data"]["task_id"] == task.id
+        assert data["data"]["status"] == "canceled"
+
+    async def test_running任务_取消成功返回200(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_task(db_session, status="running", task_id="task-cancel-running")
+
+        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "canceled"
+
+    async def test_已终态返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        for idx, status in enumerate(["completed", "failed", "partially_completed", "canceled"]):
+            task = await self._seed_task(db_session, status=status, task_id=f"task-cancel-{status}-{idx}")
+            response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
+            assert response.status_code == 409
+            assert response.json()["code"] == "E2003"
+
+    async def test_任务不存在返回404_E2001(self, async_client: AsyncClient, auth_headers: dict):
+        response = await async_client.post(
+            "/api/research/00000000-0000-0000-0000-000000000000/cancel",
+            headers=auth_headers,
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "E2001"
+
+    async def test_无权取消他人任务返回403_E2002(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_task(db_session, status="pending", user_id=999, task_id="task-cancel-other")
+
+        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["code"] == "E2002"
+
+    async def test_admin可取消他人任务(self, async_client: AsyncClient, admin_headers: dict, db_session: AsyncSession):
+        task = await self._seed_task(db_session, status="running", user_id=999, task_id="task-cancel-admin")
+
+        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=admin_headers)
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "canceled"
+
+    async def test_CAS并发状态变更返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        """模拟任务在 cancel 前已被 Worker 改为 completed，CAS 失败返回 E2003。"""
+        task = await self._seed_task(db_session, status="running", task_id="task-cancel-cas")
+        # 直接改 DB 状态为终态，但内存对象仍为 running（模拟并发）
+        from sqlalchemy import update as sa_update
+        await db_session.execute(
+            sa_update(ResearchTask)
+            .where(ResearchTask.id == task.id)
+            .values(status="completed")
+        )
+        await db_session.flush()
+
+        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
+        assert response.status_code == 409
+        assert response.json()["code"] == "E2003"
+
+
 # ═══════════════════════════════════════════════════════════════
 # GET /api/research/{task_id}/report — 报告获取
 # ═══════════════════════════════════════════════════════════════
