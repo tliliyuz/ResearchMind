@@ -12,6 +12,7 @@ Phase 函数注册表：
 - evidence_graph / render → 自动跳过（Phase 3 后续实现）
 """
 
+import inspect
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -20,6 +21,7 @@ from sqlalchemy import func, select as sa_select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.cost_tracker import extract_step_cost
 from app.core.task_state_resolver import FATAL_STEP_ERROR_CODES, TaskStateResolver
 from app.core.trace_recorder import TraceRecorder
 from app.models.enums import TASK_PHASE_ENUM, STEP_TYPE_ENUM
@@ -34,6 +36,7 @@ from app.pipeline.sse_bridge import (
     EVENT_STEP_FAILED,
     EVENT_STEP_SKIPPED,
     EVENT_STEP_STARTED,
+    EVENT_TASK_CANCELED,
     EVENT_TASK_COMPLETED,
     EVENT_TASK_CREATED,
     EVENT_TASK_FAILED,
@@ -172,16 +175,14 @@ class PipelineOrchestrator:
             for step_type in PHASE_ORDER:
                 # 阶段重载：检查是否已取消
                 await self._session.refresh(self._task, ["status"])
-                if self._task.status == "canceling":
+                if self._task.status == "canceled":
                     logger.info("任务已被取消，停止 Pipeline: task_id=%s", task_id)
-                    self._task.status = "canceled"
-                    self._task.completed_at = datetime.now(timezone.utc)
+                    if self._task.completed_at is None:
+                        self._task.completed_at = datetime.now(timezone.utc)
                     await self._session.commit()
-                    self._sse.publish(EVENT_TASK_FAILED, {
+                    self._sse.publish(EVENT_TASK_CANCELED, {
                         "task_id": task_id,
-                        "error_type": "TaskCanceled",
-                        "error_description": "任务已被用户取消",
-                        "recoverable": False,
+                        "status": "canceled",
                     })
                     return
 
@@ -202,18 +203,28 @@ class PipelineOrchestrator:
 
     async def _start_task(self) -> None:
         """将任务从 pending 转为 running（CAS + commit），发送 task.created 事件。"""
+        task_id = str(self._task.id)
         now = datetime.now(timezone.utc)
 
         # CAS: 仅当 status='pending' 时才更新为 running
         result = await self._session.execute(
             sa_update(ResearchTask)
-            .where(ResearchTask.id == self._task.id, ResearchTask.status == "pending")
+            .where(ResearchTask.id == task_id, ResearchTask.status == "pending")
             .values(status="running", started_at=now)
         )
         if result.rowcount == 0:
+            # CAS 失败时显式查询当前状态，避免访问可能过期的 self._task
+            current_status = None
+            try:
+                status_result = await self._session.execute(
+                    sa_select(ResearchTask.status).where(ResearchTask.id == task_id)
+                )
+                current_status = status_result.scalar_one_or_none()
+            except Exception:
+                logger.exception("查询任务状态时异常: task_id=%s", task_id)
             logger.warning(
                 "CAS 失败：任务状态已变更，跳过启动: task_id=%s, current_status=%s",
-                self._task.id, self._task.status,
+                task_id, current_status,
             )
             return
         await self._session.commit()
@@ -328,8 +339,37 @@ class PipelineOrchestrator:
     # ── Step 生命周期 ───────────────────────────────────────
 
     async def _create_step(self, step_type: str) -> ResearchStep:
-        """创建 ResearchStep（pending 状态）。"""
+        """创建或复用 ResearchStep（pending 状态）。
+
+        优先复用同一任务同一 phase 下尚未进入终态（pending / running）的已有 Step。
+        这能覆盖两种场景：
+        1. research_service 创建任务时已写入首个 planning step，Orchestrator 不应重复创建；
+        2. Worker 断点续跑 / 异常重启后，遗留的 pending / running Step 应继续执行而非新建。
+        """
         now = datetime.now(timezone.utc)
+
+        # 复用已有非终态 Step（按 started_at 升序，pending 的 NULL 在最前）
+        result = await self._session.execute(
+            sa_select(ResearchStep)
+            .where(
+                ResearchStep.task_id == self._task.id,
+                ResearchStep.step_type == step_type,
+                ResearchStep.status.in_(["pending", "running"]),
+            )
+            .order_by(ResearchStep.started_at)
+            .limit(1)
+        )
+        scalar_result = result.scalar_one_or_none()
+        if inspect.isawaitable(scalar_result):
+            scalar_result = await scalar_result
+        existing_step = scalar_result
+        if existing_step is not None:
+            logger.debug(
+                "Step 复用: step_id=%s, type=%s, status=%s",
+                existing_step.id, step_type, existing_step.status,
+            )
+            return existing_step
+
         step = ResearchStep(
             task_id=self._task.id,
             step_type=step_type,
@@ -393,6 +433,7 @@ class PipelineOrchestrator:
         step.completed_at = now
         step.duration_ms = duration_ms
         step.output = output if isinstance(output, dict) else {"result": str(output)}
+        step.cost = extract_step_cost(step.output, default_model=settings.LLM_MODEL)
         await self._session.flush()
 
         # 更新 task 统计
@@ -429,16 +470,49 @@ class PipelineOrchestrator:
             "saved_at": now.isoformat(),
         })
 
-        # Render 阶段 Trace 埋点
-        if step.step_type == "render" and isinstance(output, dict):
-            self._trace.record_render(
-                duration_ms=duration_ms or 0,
-                input_tokens=output.get("prompt_tokens", 0),
-                output_tokens=output.get("completion_tokens", 0),
-                sections_count=output.get("sections_count", 0),
-                citations_count=output.get("citations_count", 0),
-                retries=output.get("retry_count", 0),
-            )
+        # LLM 阶段 Trace 埋点（Planning / Rerank / Synthesis / Render）
+        if isinstance(output, dict):
+            step_type = step.step_type
+            if step_type == "planning":
+                self._trace.record_planning(
+                    duration_ms=duration_ms or 0,
+                    input_tokens=output.get("prompt_tokens", 0),
+                    output_tokens=output.get("completion_tokens", 0),
+                    sub_questions_count=len(output.get("sub_questions", [])),
+                    retries=output.get("retry_count", 0),
+                    model=output.get("model"),
+                )
+            elif step_type == "rerank":
+                self._trace.record_rerank(
+                    duration_ms=duration_ms or 0,
+                    bm25_candidates=output.get("bm25_candidates", 0),
+                    llm_reranked=output.get("evidence_count", 0),
+                    input_tokens=output.get("prompt_tokens", 0),
+                    output_tokens=output.get("completion_tokens", 0),
+                    retries=output.get("retry_count", 0),
+                    model=output.get("model"),
+                )
+            elif step_type == "synthesis":
+                self._trace.record_synthesis(
+                    duration_ms=duration_ms or 0,
+                    input_tokens=output.get("prompt_tokens", 0),
+                    output_tokens=output.get("completion_tokens", 0),
+                    clusters_count=output.get("clusters_count", 0),
+                    conflicts_count=output.get("conflicts_count", 0),
+                    knowledge_gaps_count=output.get("gaps_count", 0),
+                    retries=output.get("retry_count", 0),
+                    model=output.get("model"),
+                )
+            elif step_type == "render":
+                self._trace.record_render(
+                    duration_ms=duration_ms or 0,
+                    input_tokens=output.get("prompt_tokens", 0),
+                    output_tokens=output.get("completion_tokens", 0),
+                    sections_count=output.get("sections_count", 0),
+                    citations_count=output.get("citations_count", 0),
+                    retries=output.get("retry_count", 0),
+                    model=output.get("model"),
+                )
 
         # 检查是否需要提前终止（当前阶段 fatal 等）
         await self._check_early_termination()
@@ -599,6 +673,52 @@ class PipelineOrchestrator:
         self._task.execution_context = context
         await self._session.flush()
 
+    # ── Step 加载 ───────────────────────────────────────────
+
+    async def _load_task_steps(self) -> list[ResearchStep]:
+        """重新加载当前任务的全部 Step。
+
+        由于 async_session_factory 设置 expire_on_commit=False，且 task 通过
+        session.get() 加载时 steps 关系不会自动预取，session.refresh(task, ["steps"])
+        在异步会话中对集合关系的刷新不可靠（可能返回空或旧快照）。Resolver 需要
+        基于最新 Step 状态推导 Task 状态，因此显式查询 research_steps 表，并强制
+        使用 populate_existing 覆盖 identity map 中可能过期的 Step 对象。
+
+        注：对 result.scalars()/all() 做 awaitable 兼容，以适配单元测试中的
+        AsyncMock（其方法会被包装为 coroutine）。
+        """
+        try:
+            result = await self._session.execute(
+                sa_select(ResearchStep)
+                .where(ResearchStep.task_id == self._task.id)
+                .order_by(ResearchStep.started_at)
+                .execution_options(populate_existing=True)
+            )
+            scalars_result = result.scalars()
+            if inspect.isawaitable(scalars_result):
+                scalars_result = await scalars_result
+            rows = scalars_result.all()
+            if inspect.isawaitable(rows):
+                rows = await rows
+            steps = list(rows)
+            if steps:
+                logger.debug(
+                    "_load_task_steps 加载 Step: task_id=%s, count=%d, statuses=%s",
+                    self._task.id,
+                    len(steps),
+                    [s.status for s in steps],
+                )
+                return steps
+        except Exception as exc:
+            logger.debug(
+                "显式查询 Step 失败，回退到 task.steps: task_id=%s, error=%s",
+                self._task.id, exc,
+            )
+
+        # 兜底：显式查询未返回 Step 时（测试 mock 或查询为空），回退到 task.steps
+        await self._session.refresh(self._task, ["steps"])
+        return list(self._task.steps) if hasattr(self._task, "steps") else []
+
     # ── 提前终止检查 ────────────────────────────────────────
 
     async def _check_early_termination(self) -> None:
@@ -606,9 +726,7 @@ class PipelineOrchestrator:
 
         如果 Resolver 返回 failed 且不可恢复，则提前终止 Pipeline。
         """
-        # 获取当前所有 steps（从 task.steps 关系）
-        # 注意：task.steps 是 lazy="selectin"，已在加载 task 时预取
-        steps = self._task.steps if hasattr(self._task, "steps") else []
+        steps = await self._load_task_steps()
 
         # 获取当前 evidence 数量
         evidence_count = self._task.total_evidence or 0
@@ -620,7 +738,7 @@ class PipelineOrchestrator:
         if new_status == "failed" and error_info:
             # 致命失败 → 提前终止（CAS）
             now = datetime.now(timezone.utc)
-            await self._session.execute(
+            result = await self._session.execute(
                 sa_update(ResearchTask)
                 .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
                 .values(
@@ -632,6 +750,14 @@ class PipelineOrchestrator:
                 )
             )
             await self._session.flush()
+
+            if result.rowcount == 0:
+                await self._session.refresh(self._task, ["status"])
+                logger.warning(
+                    "CAS 失败：提前终止时任务状态已变更: task_id=%s, current_status=%s",
+                    self._task.id, self._task.status,
+                )
+                return
 
             payload = self._build_task_failed_payload(
                 error_type=error_info.get("error_code", "Unknown"),
@@ -648,7 +774,7 @@ class PipelineOrchestrator:
 
     async def _finalize_task(self) -> None:
         """全部 Phase 完成后推导最终 Task State 并写入（CAS）。"""
-        steps = self._task.steps if hasattr(self._task, "steps") else []
+        steps = await self._load_task_steps()
         evidence_count = self._task.total_evidence or 0
 
         new_status, error_info = self._resolver.resolve(
@@ -674,12 +800,19 @@ class PipelineOrchestrator:
             .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
             .values(**values)
         )
-        if result.rowcount == 0:
-            logger.warning(
-                "CAS 失败：最终化时任务状态已变更: task_id=%s",
-                self._task.id,
-            )
         await self._session.flush()
+
+        if result.rowcount == 0:
+            await self._session.refresh(self._task, ["status"])
+            logger.warning(
+                "CAS 失败：最终化时任务状态已非 running: task_id=%s, current_status=%s",
+                self._task.id, self._task.status,
+            )
+            if self._task.status == "running":
+                raise RuntimeError(
+                    f"CAS 更新失败但任务仍为 running: task_id={self._task.id}"
+                )
+            return
 
         # SSE 最终事件
         if new_status == "completed":
@@ -716,21 +849,35 @@ class PipelineOrchestrator:
 
     async def _handle_fatal_error(self, error: Exception) -> None:
         """处理未捕获的致命错误：CAS 更新 task status 为 failed。"""
+        # 先捕获 task_id，避免 session 失效/对象过期后访问 self._task.id 触发懒加载。
+        # Celery Worker 运行在同步 greenlet 中，懒加载会导致 MissingGreenlet。
+        task_id = str(self._task.id)
+
+        # 若之前的数据库异常导致 session 进入 rollback-only（如 DataError），
+        # 先回滚使 session 恢复可用。
         try:
-            # 若之前的数据库异常导致 session 进入 rollback-only（如 DataError），
-            # 先回滚使 session 恢复可用，否则后续访问 self._task.id 都会触发 PendingRollbackError。
             await self._session.rollback()
+        except Exception:
+            logger.exception("Session rollback 失败: task_id=%s", task_id)
 
-            now = datetime.now(timezone.utc)
-            error_code = getattr(error, "error_code", None) or "E3999"
-            error_msg = str(error)
+        now = datetime.now(timezone.utc)
+        error_code = getattr(error, "error_code", None) or "E3999"
+        error_msg = str(error)
+        recoverable = _extract_recoverable(error)
+
+        # trace  finish 失败不应阻断状态写入
+        try:
             trace_data = self._trace.finish()
-            recoverable = _extract_recoverable(error)
+        except Exception:
+            logger.exception("Trace finish 失败: task_id=%s", task_id)
+            trace_data = None
 
-            # CAS: 仅当 status='running' 时才更新为 failed
-            await self._session.execute(
+        # CAS: 仅当 status='running' 时才更新为 failed
+        updated = False
+        try:
+            result = await self._session.execute(
                 sa_update(ResearchTask)
-                .where(ResearchTask.id == self._task.id, ResearchTask.status == "running")
+                .where(ResearchTask.id == task_id, ResearchTask.status == "running")
                 .values(
                     status="failed",
                     completed_at=now,
@@ -741,15 +888,37 @@ class PipelineOrchestrator:
                 )
             )
             await self._session.flush()
+            updated = result.rowcount > 0
+        except Exception:
+            logger.exception("写入失败状态时异常: task_id=%s", task_id)
+            raise
 
+        if not updated:
+            # CAS 失败时显式查询当前状态，不访问可能已过期的 self._task
+            current_status = None
+            try:
+                status_result = await self._session.execute(
+                    sa_select(ResearchTask.status).where(ResearchTask.id == task_id)
+                )
+                current_status = status_result.scalar_one_or_none()
+            except Exception:
+                logger.exception("查询任务状态时异常: task_id=%s", task_id)
+            logger.warning(
+                "CAS 失败：致命错误处理时任务状态已非 running: task_id=%s, current_status=%s",
+                task_id, current_status,
+            )
+            return
+
+        # SSE 发送失败不应阻断状态更新
+        try:
             payload = self._build_task_failed_payload(
                 error_type=error.__class__.__name__,
                 error_description=error_msg,
                 recoverable=recoverable,
             )
             self._sse.publish(EVENT_TASK_FAILED, payload)
-        except Exception as inner:
-            logger.exception("写入致命错误时再次失败: %s", inner)
+        except Exception:
+            logger.exception("SSE 发送失败: task_id=%s", task_id)
 
 
 # ═════════════════════════════════════════════════════════════

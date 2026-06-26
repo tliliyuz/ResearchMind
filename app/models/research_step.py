@@ -81,6 +81,14 @@ class ResearchStep(Base):
         sa.Text, default=None, server_default=sa.text("NULL"),
     )
 
+    # ── 成本 ──
+    cost: Mapped[dict | None] = mapped_column(
+        sa.JSON,
+        default=None,
+        server_default=sa.text("NULL"),
+        comment="Step 级成本：{input_tokens, output_tokens, estimated_cost_usd, model}",
+    )
+
     # ── 性能 ──
     duration_ms: Mapped[int | None] = mapped_column(
         sa.Integer, default=None, server_default=sa.text("NULL"),
