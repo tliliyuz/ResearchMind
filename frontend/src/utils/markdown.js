@@ -64,9 +64,12 @@ md.use((mdInstance) => {
     while ((match = citationRegex.exec(content)) !== null) {
       // 添加匹配前的文本
       result += mdInstance.utils.escapeHtml(content.slice(lastIndex, match.index))
-      // 渲染引用锚点
-      const indices = match[1].split(/[,，\-]/).join(',')
-      result += `<a class="citation-link" data-evidence-index="${indices}">[来源${match[1]}]</a>`
+      // 渲染引用锚点（空格分隔，支持 [data-evidence-index~="N"] 精确选择）
+      const rawIndices = match[1].split(/[,，\-]/)
+      const indices = rawIndices.join(' ')
+      // 内部仍按 0-based 索引联动 Evidence 面板，但前端展示从 1 开始
+      const displayIndices = rawIndices.map(i => Number(i) + 1).join(',')
+      result += `<a class="citation-link" data-evidence-index="${indices}">[来源${displayIndices}]</a>`
       lastIndex = citationRegex.lastIndex
     }
     // 添加剩余文本

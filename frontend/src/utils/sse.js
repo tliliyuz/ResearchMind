@@ -67,8 +67,8 @@ export function connectSSE(url, options) {
         throw new Error(`SSE 连接失败：HTTP ${response.status}`)
       }
 
-      // 连接成功
-      onStatusChange(retryCount > 0 ? 'reconnecting' : 'connected')
+      // 连接成功（首次连接为 connecting → connected，重连成功后也恢复为 connected）
+      onStatusChange('connected')
       retryCount = 0
       currentDelay = retryDelay
 

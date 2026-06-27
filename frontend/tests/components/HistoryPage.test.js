@@ -119,13 +119,12 @@ describe('HistoryPage', () => {
 
   // ===== 表格渲染 =====
 
-  it('加载列表后_store.taskList 包含数据', async () => {
+  it('加载列表后_本地 historyList 包含数据', async () => {
     const { wrapper } = await mountHistory(SAMPLE_TASKS)
 
-    const store = useTaskStore()
-    expect(store.taskList).toHaveLength(2)
-    expect(store.taskList[0].task_id).toBe('t1')
-    expect(store.taskList[1].task_id).toBe('t2')
+    expect(wrapper.vm.historyList).toHaveLength(2)
+    expect(wrapper.vm.historyList[0].task_id).toBe('t1')
+    expect(wrapper.vm.historyList[1].task_id).toBe('t2')
   })
 
   // ===== 状态筛选 =====
@@ -168,6 +167,7 @@ describe('HistoryPage', () => {
       page: 1,
       page_size: 20,
       status: undefined,
+      keyword: '量子',
     })
   })
 
@@ -221,15 +221,15 @@ describe('HistoryPage', () => {
 
     const { wrapper } = await mountHistory(SAMPLE_TASKS)
 
-    const store = useTaskStore()
-    expect(store.taskList).toHaveLength(2)
+    expect(wrapper.vm.historyList).toHaveLength(2)
 
     await wrapper.vm.handleDelete({ task_id: 't1', topic: '量子计算研究' })
     await flushPromises()
 
     expect(researchApi.deleteTask).toHaveBeenCalledWith('t1')
     expect(ElMessage.success).toHaveBeenCalledWith('删除成功')
-    expect(store.taskList).toHaveLength(1)
+    expect(wrapper.vm.historyList).toHaveLength(1)
+    expect(wrapper.vm.historyTotal).toBe(1)
   })
 
   // ===== 空页回退 =====
@@ -243,8 +243,7 @@ describe('HistoryPage', () => {
       { task_id: 't-last', topic: '最后一条', task_type: 'analysis', status: 'failed', total_sources: 0, total_evidence: 0, created_at: '2026-06-24T08:00:00Z' },
     ])
 
-    const store = useTaskStore()
-    store.total = 21  // 总共 21 条（2 页）
+    wrapper.vm.historyTotal = 21  // 总共 21 条（2 页）
     wrapper.vm.currentPage = 2
     await flushPromises()
 
@@ -265,16 +264,42 @@ describe('HistoryPage', () => {
   it('total > 0 显示分页组件', async () => {
     const { wrapper } = await mountHistory(SAMPLE_TASKS)
     await flushPromises()
-    // taskStore.total = 2，分页区域应存在
-    const store = useTaskStore()
-    expect(store.total).toBeGreaterThan(0)
+    expect(wrapper.vm.historyTotal).toBeGreaterThan(0)
   })
 
   it('total 为 0 不显示分页', async () => {
     const { wrapper } = await mountHistory([])
     await flushPromises()
-    // v-if="taskStore.total > 0" → 不渲染
+    // v-if="historyTotal > 0" → 不渲染
     expect(wrapper.find('.history-pagination').exists()).toBe(false)
+  })
+
+  // ===== 新建研究 =====
+
+  it('点击新建研究_清空当前任务并跳转_research', async () => {
+    const { wrapper, r } = await mountHistory(SAMPLE_TASKS)
+    const store = useTaskStore()
+    const clearSpy = vi.spyOn(store, 'clearCurrent')
+
+    await wrapper.vm.handleNewResearch()
+    await flushPromises()
+
+    expect(clearSpy).toHaveBeenCalled()
+    expect(r.currentRoute.value.path).toBe('/research')
+  })
+
+  it('历史页筛选不影响 taskStore.taskList', async () => {
+    const { wrapper } = await mountHistory(SAMPLE_TASKS)
+    const store = useTaskStore()
+    store.taskList = [{ task_id: 'sidebar-only', topic: '侧边栏任务' }]
+
+    researchApi.getTaskList.mockClear()
+    wrapper.vm.filterStatus = 'completed'
+    wrapper.vm.onFilterChange()
+    await flushPromises()
+
+    expect(store.taskList).toHaveLength(1)
+    expect(store.taskList[0].task_id).toBe('sidebar-only')
   })
 
   // ===== 加载状态 =====
