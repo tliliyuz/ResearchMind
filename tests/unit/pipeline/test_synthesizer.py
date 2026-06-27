@@ -219,8 +219,10 @@ class TestSynthesisSuccess:
 
         progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
         completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
-        assert len(progress_calls) == 1
-        assert progress_calls[0].args[1]["clusters_count"] == 1
+        assert len(progress_calls) == 2
+        assert "跨源综合" in progress_calls[0].args[1]["label"]
+        assert progress_calls[1].args[1]["clusters_count"] == 1
+        assert "观点聚类" in progress_calls[1].args[1]["label"]
         assert len(completed_calls) == 1
         assert completed_calls[0].args[1]["clusters_count"] == 1
 

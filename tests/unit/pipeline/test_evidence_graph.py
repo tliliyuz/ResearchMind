@@ -214,9 +214,11 @@ class TestEvidenceGraphSuccess:
         assert isinstance(output["duration_ms"], int)
 
         progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
-        assert len(progress_calls) == 1
-        assert progress_calls[0].args[1]["item_count"] == 2
-        assert progress_calls[0].args[1]["cluster_count"] == 1
+        assert len(progress_calls) == 2
+        assert progress_calls[0].args[1]["label"] == "正在构建来源图谱..."
+        assert progress_calls[1].args[1]["item_count"] == 2
+        assert progress_calls[1].args[1]["cluster_count"] == 1
+        assert "来源图谱构建完成" in progress_calls[1].args[1]["label"]
 
     @pytest.mark.asyncio
     async def test_items按relevance_score降序并重新分配index(self, db_session):

@@ -153,7 +153,7 @@ class TestCreateTask:
         assert task.topic == "量子计算对密码学的影响"
         assert task.user_id == 1
         assert task.status == "pending"
-        assert task.total_steps == 1
+        assert task.total_steps == 7
 
     async def test_创建后附首个planning_step(self, db_session: AsyncSession):
         req = _make_request()

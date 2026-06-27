@@ -311,6 +311,8 @@ class TestRenderSuccess:
         progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
         completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
         assert len(progress_calls) == 2
+        assert "渲染报告" in progress_calls[0].args[1]["label"]
+        assert "报告渲染完成" in progress_calls[1].args[1]["label"]
         assert len(completed_calls) == 1
 
     @pytest.mark.asyncio

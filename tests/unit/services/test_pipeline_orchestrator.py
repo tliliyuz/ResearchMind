@@ -540,6 +540,117 @@ class TestCostTracking:
         assert result["breakdown"]["planning"]["cost"] > 0
         assert result["phases"]["planning"]["model"] == "deepseek-v4-pro"
 
+    @pytest.mark.asyncio
+    async def test_complete_step_search阶段记录trace(self):
+        """search 阶段完成后应调用 record_search 写入 trace。"""
+        task = _make_task()
+        session = AsyncMock()
+        session.refresh = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        step = ResearchStep(
+            id="step-search-001",
+            task_id=task.id,
+            step_type="search",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        trace = TraceRecorder(task_id=str(task.id), user_id=1, topic="测试")
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=trace, phase_handlers={},
+        )
+
+        output = {
+            "total_results": 30,
+            "sub_question_results": [
+                {"status": "completed", "results_count": 10},
+                {"status": "completed", "results_count": 10},
+                {"status": "skipped", "results_count": 10},
+            ],
+        }
+        await orchestrator._complete_step(step, "searching", output)
+
+        search_data = trace.finish()["phases"]["search"]
+        assert search_data is not None
+        assert search_data["total_results"] == 30
+        assert search_data["success_count"] == 2
+        assert search_data["skipped_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_complete_step_fetch阶段记录trace(self):
+        """fetch 阶段完成后应调用 record_fetch 写入 trace。"""
+        task = _make_task()
+        session = AsyncMock()
+        session.refresh = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        step = ResearchStep(
+            id="step-fetch-001",
+            task_id=task.id,
+            step_type="fetch",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        trace = TraceRecorder(task_id=str(task.id), user_id=1, topic="测试")
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=trace, phase_handlers={},
+        )
+
+        output = {
+            "fetched": [
+                {"url": "https://a.com", "content_length": 100},
+                {"url": "https://b.com", "content_length": 200},
+            ],
+            "successful": 2,
+            "failed": 0,
+            "skipped_safety": 1,
+        }
+        await orchestrator._complete_step(step, "fetching", output)
+
+        fetch_data = trace.finish()["phases"]["fetch"]
+        assert fetch_data is not None
+        assert fetch_data["total_urls"] == 2
+        assert fetch_data["success_count"] == 2
+        assert fetch_data["skipped_count"] == 1
+        assert fetch_data["total_content_bytes"] == 300
+
+    @pytest.mark.asyncio
+    async def test_complete_step_evidence_graph阶段记录trace(self):
+        """evidence_graph 阶段完成后应调用 record_evidence_graph 写入 trace。"""
+        task = _make_task()
+        session = AsyncMock()
+        session.refresh = AsyncMock()
+        sse_bridge = MagicMock()
+        sse_bridge.task_id = str(task.id)
+
+        step = ResearchStep(
+            id="step-eg-001",
+            task_id=task.id,
+            step_type="evidence_graph",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        trace = TraceRecorder(task_id=str(task.id), user_id=1, topic="测试")
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=trace, phase_handlers={},
+        )
+
+        output = {"item_count": 8, "source_count": 5}
+        await orchestrator._complete_step(step, "building_evidence_graph", output)
+
+        eg_data = trace.finish()["phases"]["evidence_graph"]
+        assert eg_data is not None
+        assert eg_data["evidence_count"] == 8
+        assert eg_data["source_count"] == 5
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 真实 DB session 集成验证

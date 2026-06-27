@@ -245,6 +245,25 @@ class TestRunFetchSuccess:
             assert "step.completed" in event_types
 
     @pytest.mark.asyncio
+    async def test_创建子step不递增task_total_steps(self):
+        """子 step 不应影响全局进度分母，task.total_steps 保持不变。"""
+        mock_sources = _make_mock_sources(2)
+        self.db_session.execute = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_sources
+        self.db_session.execute.return_value = mock_result
+
+        with patch("app.pipeline.fetcher._fetch_one_url") as mock_fetch:
+            mock_fetch.return_value = _make_fetch_success_result()
+
+            original_total = self.task.total_steps
+            await run_fetch(
+                self.task, self.step, self.db_session, self.sse_bridge,
+            )
+
+            assert self.task.total_steps == original_total
+
+    @pytest.mark.asyncio
     async def test_超长正文_写入截断后内容(self):
         mock_sources = _make_mock_sources(1)
         self.db_session.execute = AsyncMock()

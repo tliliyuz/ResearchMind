@@ -247,6 +247,23 @@ class TestRunSearchSuccess:
             assert "step.completed" in event_types
 
     @pytest.mark.asyncio
+    async def test_创建子step不递增task_total_steps(self):
+        """子 step 不应影响全局进度分母，task.total_steps 保持不变。"""
+        with patch("app.pipeline.searcher._call_tavily") as mock_tavily:
+            mock_tavily.side_effect = [
+                _make_tavily_response(["https://a.com/1"]),
+                _make_tavily_response(["https://b.com/1"]),
+                _make_tavily_response(["https://c.com/1"]),
+            ]
+
+            original_total = self.task.total_steps
+            await run_search(
+                self.task, self.step, self.db_session, self.sse_bridge,
+            )
+
+            assert self.task.total_steps == original_total
+
+    @pytest.mark.asyncio
     async def test_无子问题输入_返回空结果(self):
         # 让 Planning 输出空子问题
         _mock_planning_in_session(self.db_session, [])

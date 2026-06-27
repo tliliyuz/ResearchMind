@@ -14,6 +14,7 @@ from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
 from app.models.user import User
 from app.pipeline.reranker import run_rerank
+from app.pipeline.sse_bridge import EVENT_STEP_PROGRESS, EVENT_STEP_COMPLETED, EVENT_TASK_WARNING
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -188,6 +189,14 @@ class TestRerankSuccess:
 
         # 验证 task 统计更新
         assert task.total_evidence == 3
+
+        # 验证 SSE 进度事件携带 label
+        progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
+        completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
+        assert len(progress_calls) == 2
+        assert "BM25 粗筛完成" in progress_calls[0].args[1]["label"]
+        assert "LLM 精排" in progress_calls[1].args[1]["label"]
+        assert len(completed_calls) == 1
 
     @pytest.mark.asyncio
     async def test_task_type维度注入Prompt(self, db_session):
