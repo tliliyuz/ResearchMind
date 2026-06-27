@@ -119,88 +119,51 @@
       </div>
     </div>
 
-    <!-- ========== 运行态（Phase 3 占位） ========== -->
-    <div v-else-if="pageState === 'running'" class="state-placeholder">
-      <div class="placeholder-card">
-        <div class="running-spinner">
-          <i class="fas fa-spinner fa-spin"></i>
-        </div>
-        <h2>研究正在执行中</h2>
-        <p class="task-topic">{{ taskStore.current?.topic }}</p>
-
-        <div class="running-info" v-if="taskStore.current?.current_phase">
-          <span class="info-label">当前阶段：</span>
-          <span class="info-value">{{ phaseLabel(taskStore.current.current_phase) }}</span>
-        </div>
-
-        <div class="running-info">
-          <span class="info-label">进度：</span>
-          <span class="info-value">
-            {{ taskStore.progress.completed_steps }} / {{ taskStore.progress.total_steps }} 步骤
-          </span>
-        </div>
-
-        <div class="running-info">
-          <span class="info-label">SSE 连接：</span>
-          <span class="info-value" :class="sseStatusClass">
-            {{ sseStatusLabel }}
-          </span>
-        </div>
-
-        <button class="danger-btn" :disabled="cancelLoading" @click="handleCancel">
-          <i v-if="!cancelLoading" class="fas fa-ban"></i> {{ cancelLoading ? '取消中...' : '取消研究' }}
-        </button>
-      </div>
+    <!-- ========== 运行态 ========== -->
+    <div v-else-if="pageState === 'running'" class="running-state">
+      <RunningHeader
+        :title="taskStore.current?.topic"
+        :status="taskStore.current?.status"
+        :current-phase="taskStore.current?.current_phase"
+        :elapsed-ms="elapsedMs"
+        :cancel-loading="cancelLoading"
+        @cancel="handleCancel"
+      />
+      <PipelineProgress
+        :phases="taskStore.phaseStates"
+        :progress="taskStore.progress"
+        :phase-durations="taskStore.phaseDurations"
+      />
+      <StepLog :logs="taskStore.stepLogs" :sse-status="taskStore.sseStatus" />
+      <CheckpointBanner v-if="taskStore.lastCheckpoint" :checkpoint="taskStore.lastCheckpoint" />
     </div>
 
-    <!-- ========== 完成态（Phase 3 占位） ========== -->
-    <div v-else class="state-placeholder">
-      <div class="placeholder-card">
-        <!-- 状态图标 -->
-        <div v-if="taskStore.current?.status === 'completed'" class="result-icon success">
-          <i class="fas fa-circle-check"></i>
-        </div>
-        <div v-else-if="taskStore.current?.status === 'failed'" class="result-icon danger">
-          <i class="fas fa-times-circle"></i>
-        </div>
-        <div v-else-if="taskStore.current?.status === 'canceled'" class="result-icon muted">
-          <i class="fas fa-ban"></i>
-        </div>
-        <div v-else class="result-icon warning">
-          <i class="fas fa-triangle-exclamation"></i>
-        </div>
-
-        <h2>{{ statusTitle }}</h2>
-        <p class="task-topic">{{ taskStore.current?.topic }}</p>
-
-        <!-- 成功统计 -->
-        <div
-          v-if="taskStore.current?.status === 'completed' || taskStore.current?.status === 'partially_completed'"
-          class="stats-row"
-        >
-          <div class="stat-item">
-            <span class="stat-value">{{ taskStore.current?.total_sources || 0 }}</span>
-            <span class="stat-label">来源</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-value">{{ taskStore.current?.total_evidence || 0 }}</span>
-            <span class="stat-label">证据</span>
-          </div>
-        </div>
-
-        <!-- 失败信息 -->
-        <div v-if="taskStore.current?.status === 'failed'" class="error-info">
-          <p class="error-message">{{ taskStore.current?.error_message || '未知错误' }}</p>
-          <span v-if="taskStore.current?.error_code" class="error-code">
-            {{ taskStore.current.error_code }}
-          </span>
-          <p v-if="taskStore.current?.recoverable" class="recoverable-hint">
-            该错误可恢复，已完成阶段不丢失
-          </p>
-        </div>
-
-        <!-- 操作按钮 -->
-        <div class="result-actions">
+    <!-- ========== 完成态 ========== -->
+    <div v-else class="completed-state">
+      <ReportViewer
+        v-if="isSuccessStatus"
+        :task="taskStore.current"
+        @back="handleBackToCreate"
+      />
+      <FailedView
+        v-else-if="taskStore.current?.status === 'failed'"
+        :error-code="taskStore.current?.error_code"
+        :error-message="taskStore.current?.error_message"
+        :failed-phase="taskStore.current?.current_phase"
+        :recoverable="taskStore.current?.recoverable"
+        @back="handleBackToCreate"
+      />
+      <CanceledView
+        v-else-if="taskStore.current?.status === 'canceled'"
+        :topic="taskStore.current?.topic"
+        :phases="taskStore.phaseStates"
+        :phase-durations="taskStore.phaseDurations"
+        @back="handleBackToCreate"
+      />
+      <div v-else class="state-placeholder">
+        <div class="placeholder-card">
+          <h2>{{ statusTitle }}</h2>
+          <p class="task-topic">{{ taskStore.current?.topic }}</p>
           <button class="back-btn" @click="handleBackToCreate">
             <i class="fas fa-arrow-left"></i> 返回新建研究
           </button>
@@ -211,13 +174,22 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTaskStore } from '@/stores/task'
+import { useReportStore } from '@/stores/report'
 import TypeCard from '@/components/task/TypeCard.vue'
 import ExampleCard from '@/components/task/ExampleCard.vue'
+import RunningHeader from '@/components/task/RunningHeader.vue'
+import PipelineProgress from '@/components/task/PipelineProgress.vue'
+import StepLog from '@/components/task/StepLog.vue'
+import CheckpointBanner from '@/components/task/CheckpointBanner.vue'
+import ReportViewer from '@/components/report/ReportViewer.vue'
+import FailedView from '@/components/report/FailedView.vue'
+import CanceledView from '@/components/report/CanceledView.vue'
 
 const taskStore = useTaskStore()
+const reportStore = useReportStore()
 
 // ===== 表单数据 =====
 const form = reactive({
@@ -231,6 +203,29 @@ const showAdvanced = ref(false)
 const submitting = ref(false)
 const showValidation = ref(false)
 const cancelLoading = ref(false)
+
+// ===== 已用时时钟 =====
+const elapsedMs = ref(0)
+let elapsedTimer = null
+
+function startElapsedTimer() {
+  stopElapsedTimer()
+  elapsedTimer = setInterval(() => {
+    const base = taskStore.current?.started_at || taskStore.current?.created_at
+    if (base) {
+      elapsedMs.value = Date.now() - new Date(base).getTime()
+    } else {
+      elapsedMs.value = 0
+    }
+  }, 1000)
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
 
 // ===== 研究类型元数据 =====
 const TASK_TYPES = [
@@ -265,6 +260,26 @@ const pageState = computed(() => {
   if (status === 'pending' || status === 'running') return 'running'
   return 'completed'
 })
+
+const isSuccessStatus = computed(() => {
+  const status = taskStore.current?.status
+  return status === 'completed' || status === 'partially_completed'
+})
+
+// ===== 监听状态切换 =====
+watch(pageState, (state, prevState) => {
+  if (state === 'running') {
+    startElapsedTimer()
+  } else {
+    stopElapsedTimer()
+  }
+  if (state === 'completed' && isSuccessStatus.value && taskStore.current?.task_id) {
+    reportStore.fetch(taskStore.current.task_id)
+  }
+  if (state === 'create') {
+    reportStore.clear()
+  }
+}, { immediate: true })
 
 // ===== 表单校验 =====
 const canSubmit = computed(() => {
@@ -382,6 +397,7 @@ async function handleCancel() {
 // ===== 返回创建 =====
 function handleBackToCreate() {
   taskStore.clearCurrent()
+  reportStore.clear()
   // 重置表单
   form.topic = ''
   form.task_type = null
@@ -389,39 +405,6 @@ function handleBackToCreate() {
   form.language = 'zh'
   showValidation.value = false
 }
-
-// ===== 辅助 =====
-function phaseLabel(phase) {
-  const map = {
-    planning: 'Planning — 拆解研究主题',
-    search: 'Search — 搜索信息源',
-    fetch: 'Fetch — 抓取网页内容',
-    rerank: 'Rerank — 证据粗筛精排',
-    synthesis: 'Synthesis — 跨源综合',
-    graph: 'Evidence Graph — 构建证据图谱',
-    render: 'Render — 报告渲染',
-  }
-  return map[phase] || phase
-}
-
-const sseStatusLabel = computed(() => {
-  const map = {
-    disconnected: '未连接',
-    connecting: '连接中...',
-    connected: '已连接 ✓',
-    reconnecting: '重连中...',
-    error: '连接失败',
-  }
-  return map[taskStore.sseStatus] || taskStore.sseStatus
-})
-
-const sseStatusClass = computed(() => {
-  return {
-    'status-connected': taskStore.sseStatus === 'connected',
-    'status-connecting': taskStore.sseStatus === 'connecting' || taskStore.sseStatus === 'reconnecting',
-    'status-error': taskStore.sseStatus === 'error',
-  }
-})
 
 const statusTitle = computed(() => {
   const map = {
@@ -434,13 +417,25 @@ const statusTitle = computed(() => {
 })
 
 // ===== 生命周期 =====
+onMounted(() => {
+  // 返回运行态任务时自动恢复 SSE 连接，避免日志丢失
+  if (taskStore.current?.status === 'running' && taskStore.sseStatus === 'disconnected') {
+    taskStore.connectSSE(taskStore.current.task_id)
+  }
+})
+
 onBeforeUnmount(() => {
   // 离开页面时断开 SSE（不 clearCurrent，保留状态供返回查看）
   taskStore.disconnectSSE()
+  stopElapsedTimer()
 })
 </script>
 
 <style scoped>
+.research-page {
+  height: 100%;
+}
+
 /* ===== 创建态容器 ===== */
 .create-container {
   max-width: var(--rm-content-max-width);
@@ -622,7 +617,33 @@ onBeforeUnmount(() => {
   gap: var(--rm-space-3);
 }
 
-/* ===== 运行态 / 完成态 占位 ===== */
+/* ===== 运行态 ===== */
+.running-state {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--rm-bg-page);
+  overflow: hidden;
+}
+
+/* ===== 完成态 ===== */
+.completed-state {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.completed-state > .report-viewer,
+.completed-state > .state-placeholder {
+  align-self: stretch;
+  flex: 1;
+  width: 100%;
+}
+
+/* ===== 兜底占位 ===== */
 .state-placeholder {
   display: flex;
   align-items: center;
@@ -652,165 +673,6 @@ onBeforeUnmount(() => {
   font-size: var(--rm-text-body);
   color: var(--rm-text-secondary);
   margin: 0 0 var(--rm-space-4) 0;
-}
-
-/* ===== 运行态特有 ===== */
-.running-spinner {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto var(--rm-space-4);
-  background: var(--rm-primary-light);
-  border: 1px solid var(--rm-primary-border);
-  border-radius: var(--rm-radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--rm-primary);
-  font-size: var(--rm-text-xl);
-}
-
-.running-info {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--rm-space-1_5);
-  margin-bottom: var(--rm-space-2);
-  font-size: var(--rm-text-sm);
-}
-
-.info-label {
-  color: var(--rm-text-tertiary);
-}
-
-.info-value {
-  color: var(--rm-text-primary);
-  font-weight: var(--rm-weight-medium);
-}
-
-.status-connected {
-  color: var(--rm-success) !important;
-}
-
-.status-connecting {
-  color: var(--rm-warning) !important;
-}
-
-.status-error {
-  color: var(--rm-danger) !important;
-}
-
-.danger-btn {
-  margin-top: var(--rm-space-5);
-  height: 32px;
-  padding: 0 12px;
-  background: var(--rm-danger-light);
-  color: var(--rm-danger);
-  border: 1px solid var(--rm-danger-border);
-  border-radius: var(--rm-radius-md);
-  font-size: var(--rm-text-xs);
-  font-weight: var(--rm-weight-medium);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--rm-space-1);
-  transition: all var(--rm-transition-fast);
-  flex-shrink: 0;
-  font-family: inherit;
-}
-
-.danger-btn:hover {
-  background: var(--rm-danger-border);
-}
-
-.danger-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* ===== 完成态特有 ===== */
-.result-icon {
-  width: 64px;
-  height: 64px;
-  border-radius: var(--rm-radius-full);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto var(--rm-space-4);
-  font-size: 24px;
-}
-
-.result-icon.success {
-  background: var(--rm-success-light);
-  color: var(--rm-success);
-}
-
-.result-icon.danger {
-  background: var(--rm-danger-light);
-  color: var(--rm-danger);
-}
-
-.result-icon.warning {
-  background: var(--rm-warning-light);
-  color: var(--rm-warning);
-}
-
-.result-icon.muted {
-  background: var(--rm-bg-elevated);
-  color: var(--rm-text-secondary);
-}
-
-.stats-row {
-  display: flex;
-  justify-content: center;
-  gap: var(--rm-space-8);
-  margin-bottom: var(--rm-space-4);
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-item .stat-value {
-  display: block;
-  font-size: var(--rm-text-2xl);
-  font-weight: var(--rm-weight-bold);
-  color: var(--rm-primary);
-}
-
-.stat-item .stat-label {
-  font-size: var(--rm-text-xs);
-  color: var(--rm-text-tertiary);
-}
-
-.error-info {
-  margin-bottom: var(--rm-space-4);
-}
-
-.error-message {
-  font-size: var(--rm-text-body);
-  color: var(--rm-text-secondary);
-  margin: 0 0 var(--rm-space-1_5) 0;
-}
-
-.error-code {
-  display: inline-block;
-  background: var(--rm-danger-light);
-  color: var(--rm-danger);
-  font-family: var(--rm-font-mono);
-  font-size: var(--rm-text-3xs);
-  font-weight: var(--rm-weight-semibold);
-  padding: 2px 8px;
-  border-radius: var(--rm-radius-xs);
-}
-
-.recoverable-hint {
-  font-size: var(--rm-text-xs);
-  color: var(--rm-text-tertiary);
-  margin-top: var(--rm-space-2);
-}
-
-.result-actions {
-  margin-top: var(--rm-space-5);
 }
 
 .back-btn {

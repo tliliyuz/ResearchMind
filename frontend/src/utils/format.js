@@ -86,3 +86,23 @@ export function formatDuration(ms) {
   const remainSec = Math.round(seconds % 60)
   return `${minutes}m${remainSec}s`
 }
+
+/**
+ * 格式化已用时间为计时器字符串
+ * - < 1 小时：MM:SS
+ * - ≥ 1 小时：HH:MM:SS
+ * @param {number} ms - 毫秒数
+ * @returns {string}
+ */
+export function formatElapsedTime(ms) {
+  if (ms == null || ms < 0) return '00:00'
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  if (hours > 0) {
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+  }
+  return `${pad(minutes)}:${pad(seconds)}`
+}
