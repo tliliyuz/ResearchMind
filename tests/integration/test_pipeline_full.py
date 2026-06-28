@@ -243,7 +243,11 @@ class TestPipelineFullFlow:
         # SSE 记录器：完全替代 publish，避免测试依赖 Redis
         sse_bridge = SSEBridge(task_id)
         published_events: list[tuple[str, dict | None]] = []
-        sse_bridge.publish = MagicMock(side_effect=lambda event_type, data=None: published_events.append((event_type, data)))
+
+        async def _record_event(event_type, data=None):
+            published_events.append((event_type, data))
+
+        sse_bridge.publish = AsyncMock(side_effect=_record_event)
 
         trace = TraceRecorder(task_id=task_id, user_id=1, topic=task.topic)
         handlers = build_default_phase_handlers()

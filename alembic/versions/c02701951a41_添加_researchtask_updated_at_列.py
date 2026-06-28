@@ -22,10 +22,10 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.add_column('research_tasks', sa.Column(
         'updated_at',
-        sa.DateTime(timezone=True),
+        sa.DateTime(),
         server_default=sa.text('CURRENT_TIMESTAMP'),
         nullable=False,
-        comment='记录最后修改时间（ORM onupdate 维护）',
+        comment='记录最后修改时间（ORM onupdate 维护，UTC）',
     ))
 
 

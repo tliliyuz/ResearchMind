@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.cost_tracker import extract_step_cost
+from app.core.exceptions import extract_recoverable_from_exception
 from app.core.task_state_resolver import FATAL_STEP_ERROR_CODES, TaskStateResolver
 from app.core.trace_recorder import TraceRecorder
 from app.models.enums import TASK_PHASE_ENUM, STEP_TYPE_ENUM
@@ -48,14 +49,6 @@ from app.tasks.lock import acquire_step_lock_async, release_step_lock_async
 logger = logging.getLogger(__name__)
 
 # ── 工具函数 ────────────────────────────────────────────────
-
-
-def _extract_recoverable(error: Exception) -> bool:
-    """从 AppException 的 error_detail 中提取 recoverable 字段。"""
-    detail = getattr(error, "error_detail", None)
-    if isinstance(detail, dict):
-        return bool(detail.get("recoverable", False))
-    return False
 
 
 # ── Phase 函数类型 ──────────────────────────────────────────
@@ -169,7 +162,10 @@ class PipelineOrchestrator:
 
         try:
             # 1. 任务状态 pending → running（CAS + commit）
-            await self._start_task()
+            started = await self._start_task()
+            if not started:
+                logger.warning("任务未成功启动，停止 Pipeline: task_id=%s", task_id)
+                return
 
             # 2. 依次执行 7 个 Phase
             for step_type in PHASE_ORDER:
@@ -180,7 +176,7 @@ class PipelineOrchestrator:
                     if self._task.completed_at is None:
                         self._task.completed_at = datetime.now(timezone.utc)
                     await self._session.commit()
-                    self._sse.publish(EVENT_TASK_CANCELED, {
+                    await self._sse.publish(EVENT_TASK_CANCELED, {
                         "task_id": task_id,
                         "status": "canceled",
                     })
@@ -201,8 +197,12 @@ class PipelineOrchestrator:
 
     # ── 任务启动 ────────────────────────────────────────────
 
-    async def _start_task(self) -> None:
-        """将任务从 pending 转为 running（CAS + commit），发送 task.created 事件。"""
+    async def _start_task(self) -> bool:
+        """将任务从 pending 转为 running（CAS + commit），发送 task.created 事件。
+
+        Returns:
+            bool: CAS 成功返回 True，失败返回 False。
+        """
         task_id = str(self._task.id)
         now = datetime.now(timezone.utc)
 
@@ -226,19 +226,20 @@ class PipelineOrchestrator:
                 "CAS 失败：任务状态已变更，跳过启动: task_id=%s, current_status=%s",
                 task_id, current_status,
             )
-            return
+            return False
         await self._session.commit()
 
         # 刷新 ORM 对象让内存状态与 DB 一致
         await self._session.refresh(self._task)
 
-        self._sse.publish(EVENT_TASK_CREATED, {
+        await self._sse.publish(EVENT_TASK_CREATED, {
             "task_id": str(self._task.id),
             "status": "running",
             "created_at": self._task.created_at.isoformat() if self._task.created_at else None,
         })
 
         logger.info("任务启动: task_id=%s", self._task.id)
+        return True
 
     # ── 单 Phase 执行 ───────────────────────────────────────
 
@@ -403,12 +404,12 @@ class PipelineOrchestrator:
         await self._session.flush()
 
         if previous_phase != phase_name:
-            self._sse.publish(EVENT_PHASE_STARTED, {
+            await self._sse.publish(EVENT_PHASE_STARTED, {
                 "phase": phase_name,
                 "timestamp": now.isoformat(),
             })
 
-        self._sse.publish(EVENT_STEP_STARTED, {
+        await self._sse.publish(EVENT_STEP_STARTED, {
             "step_id": str(step.id),
             "step_type": step.step_type,
             "label": step.label,
@@ -445,12 +446,12 @@ class PipelineOrchestrator:
         await self._update_execution_context(step, phase_name)
 
         # SSE 事件
-        self._sse.publish(EVENT_STEP_COMPLETED, {
+        await self._sse.publish(EVENT_STEP_COMPLETED, {
             "step_id": str(step.id),
             "output": step.output,
         })
 
-        self._sse.publish(EVENT_PHASE_COMPLETED, {
+        await self._sse.publish(EVENT_PHASE_COMPLETED, {
             "phase": phase_name,
             "duration_ms": duration_ms,
         })
@@ -459,14 +460,14 @@ class PipelineOrchestrator:
         total = self._task.total_steps or 1
         completed = self._task.completed_steps or 0
         progress = round(completed / total, 2) if total > 0 else 0.0
-        self._sse.publish(EVENT_TASK_PROGRESS, {
+        await self._sse.publish(EVENT_TASK_PROGRESS, {
             "completed_steps": completed,
             "total_steps": total,
             "progress": progress,
         })
 
         # Checkpoint
-        self._sse.publish(EVENT_CHECKPOINT_SAVED, {
+        await self._sse.publish(EVENT_CHECKPOINT_SAVED, {
             "phase": phase_name,
             "last_completed_step_id": str(step.id),
             "saved_at": now.isoformat(),
@@ -574,21 +575,21 @@ class PipelineOrchestrator:
         self._task.completed_steps = (self._task.completed_steps or 0) + 1
         await self._update_execution_context(step, phase_name)
 
-        self._sse.publish(EVENT_STEP_STARTED, {
+        await self._sse.publish(EVENT_STEP_STARTED, {
             "step_id": str(step.id),
             "step_type": step.step_type,
             "label": step.label,
             "timestamp": now.isoformat(),
         })
-        self._sse.publish(EVENT_STEP_SKIPPED, {
+        await self._sse.publish(EVENT_STEP_SKIPPED, {
             "step_id": str(step.id),
             "reason": reason,
         })
-        self._sse.publish(EVENT_PHASE_COMPLETED, {
+        await self._sse.publish(EVENT_PHASE_COMPLETED, {
             "phase": phase_name,
             "duration_ms": 0,
         })
-        self._sse.publish(EVENT_CHECKPOINT_SAVED, {
+        await self._sse.publish(EVENT_CHECKPOINT_SAVED, {
             "phase": phase_name,
             "last_completed_step_id": str(step.id),
             "saved_at": now.isoformat(),
@@ -618,7 +619,7 @@ class PipelineOrchestrator:
             step.duration_ms = int(delta.total_seconds() * 1000)
         await self._session.flush()
 
-        self._sse.publish(EVENT_STEP_FAILED, {
+        await self._sse.publish(EVENT_STEP_FAILED, {
             "step_id": str(step.id),
             "error_type": error.__class__.__name__,
         })
@@ -637,7 +638,7 @@ class PipelineOrchestrator:
             task_id = str(self._task.id)
             execution_context = getattr(self._task, "execution_context", None)
 
-            recoverable = _extract_recoverable(error) if is_known_fatal else False
+            recoverable = extract_recoverable_from_exception(error) if is_known_fatal else False
             payload = self._build_task_failed_payload(
                 task_id=task_id,
                 error_type=error.__class__.__name__,
@@ -645,11 +646,11 @@ class PipelineOrchestrator:
                 recoverable=recoverable,
                 execution_context=execution_context,
             )
-            self._sse.publish(EVENT_TASK_FAILED, payload)
+            await self._sse.publish(EVENT_TASK_FAILED, payload)
             raise  # 重新抛出，由 run() 的顶层 try/except 处理
 
         # 可降级失败 → warning
-        self._sse.publish(EVENT_TASK_WARNING, {
+        await self._sse.publish(EVENT_TASK_WARNING, {
             "step_id": str(step.id),
             "error_description": error_msg,
         })
@@ -811,7 +812,7 @@ class PipelineOrchestrator:
                 recoverable=error_info.get("recoverable", False),
                 execution_context=execution_context,
             )
-            self._sse.publish(EVENT_TASK_FAILED, payload)
+            await self._sse.publish(EVENT_TASK_FAILED, payload)
 
             raise TaskFatalException(
                 f"Task 提前终止: {error_info.get('error_code')} - {error_info.get('error_message')}",
@@ -871,7 +872,7 @@ class PipelineOrchestrator:
 
         # SSE 最终事件
         if new_status == "completed":
-            self._sse.publish(EVENT_TASK_COMPLETED, {
+            await self._sse.publish(EVENT_TASK_COMPLETED, {
                 "task_id": task_id,
                 "status": "completed",
                 "trace": {
@@ -884,7 +885,7 @@ class PipelineOrchestrator:
                 },
             })
         elif new_status == "partially_completed":
-            self._sse.publish(EVENT_TASK_COMPLETED, {
+            await self._sse.publish(EVENT_TASK_COMPLETED, {
                 "task_id": task_id,
                 "status": "partially_completed",
                 "trace": task_trace,
@@ -897,7 +898,7 @@ class PipelineOrchestrator:
                 recoverable=error_info.get("recoverable", False) if error_info else False,
                 execution_context=execution_context,
             )
-            self._sse.publish(EVENT_TASK_FAILED, payload)
+            await self._sse.publish(EVENT_TASK_FAILED, payload)
 
         logger.info(
             "Pipeline 完成: task_id=%s, status=%s, steps=%d, evidence=%d",
@@ -911,17 +912,18 @@ class PipelineOrchestrator:
         task_id = str(self._task.id)
         execution_context = getattr(self._task, "execution_context", None)
 
-        # 若之前的数据库异常导致 session 进入 rollback-only（如 DataError），
-        # 先回滚使 session 恢复可用。
-        try:
-            await self._session.rollback()
-        except Exception:
-            logger.exception("Session rollback 失败: task_id=%s", task_id)
+        # 若 session 已失效/rollback-only（如 DataError），先回滚使其恢复可用。
+        # 注意：仅当 session 不活跃时才回滚，避免撤销已 flush 的 Step 失败状态。
+        if not self._session.is_active:
+            try:
+                await self._session.rollback()
+            except Exception:
+                logger.exception("Session rollback 失败: task_id=%s", task_id)
 
         now = datetime.now(timezone.utc)
         error_code = getattr(error, "error_code", None) or "E3999"
         error_msg = str(error)
-        recoverable = _extract_recoverable(error)
+        recoverable = extract_recoverable_from_exception(error)
 
         # trace  finish 失败不应阻断状态写入
         try:
@@ -976,7 +978,7 @@ class PipelineOrchestrator:
                 recoverable=recoverable,
                 execution_context=execution_context,
             )
-            self._sse.publish(EVENT_TASK_FAILED, payload)
+            await self._sse.publish(EVENT_TASK_FAILED, payload)
         except Exception:
             logger.exception("SSE 发送失败: task_id=%s", task_id)
 

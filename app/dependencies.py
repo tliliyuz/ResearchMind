@@ -15,9 +15,11 @@
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import async_session_factory
 from app.core.exceptions import (
+    InvalidTokenException,
     PermissionDeniedException,
     TaskAccessDeniedException,
     TaskNotFoundException,
@@ -67,19 +69,25 @@ async def get_current_user(
         dict: {"user_id": int, "username": str, "role": str}
 
     Raises:
+        InvalidTokenException (E1004): 请求中缺少认证信息
         UserDisabledException (E1010): 用户已被禁用
     """
-    user_id = request.state.user_id
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise InvalidTokenException("请求中缺少用户认证信息")
 
     # 校验用户是否被禁用（主键查询，毫秒级）
     user = await db.get(User, user_id)
     if user is None or user.status == "disabled":
         raise UserDisabledException()
 
+    username = getattr(request.state, "username", None)
+    role = getattr(request.state, "role", None)
+
     return {
         "user_id": user_id,
-        "username": request.state.username,
-        "role": request.state.role,
+        "username": username,
+        "role": role,
     }
 
 
@@ -126,7 +134,14 @@ async def require_task_accessible(
 
     对齐 ARCHITECTURE.md §4.3 与 API.md §7 权限矩阵。
     """
-    task = await db.get(ResearchTask, task_id)
+    from sqlalchemy import select as sa_select
+
+    result = await db.execute(
+        sa_select(ResearchTask)
+        .options(selectinload(ResearchTask.steps))
+        .where(ResearchTask.id == task_id)
+    )
+    task = result.scalar_one_or_none()
     if task is None:
         raise TaskNotFoundException(task_id)
 

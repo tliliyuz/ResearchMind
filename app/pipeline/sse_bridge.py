@@ -64,14 +64,14 @@ EVENT_CHECKPOINT_SAVED = "checkpoint.saved"
 
 
 class SSEBridge:
-    """SSE 事件发布器 —— 供 Celery Worker 同步使用。
+    """SSE 事件发布器 —— 供 Celery Worker 异步使用。
 
     每个 task 一个实例，seq 序号单调递增，保证事件有序。
 
     Usage:
         bridge = SSEBridge(task_id)
-        bridge.publish(EVENT_TASK_CREATED, {"task_id": task_id, "status": "running"})
-        bridge.publish(EVENT_STEP_COMPLETED, {"step_id": step_id, "output": {...}})
+        await bridge.publish(EVENT_TASK_CREATED, {"task_id": task_id, "status": "running"})
+        await bridge.publish(EVENT_STEP_COMPLETED, {"step_id": step_id, "output": {...}})
     """
 
     def __init__(self, task_id: str):
@@ -84,8 +84,8 @@ class SSEBridge:
         """当前 seq 序号（只读）。"""
         return self._seq
 
-    def publish(self, event_type: str, data: dict | None = None) -> None:
-        """同步发布事件到 Redis Pub/Sub。
+    async def publish(self, event_type: str, data: dict | None = None) -> None:
+        """异步发布事件到 Redis Pub/Sub。
 
         Args:
             event_type: 事件类型（使用 EVENT_* 常量）
@@ -99,7 +99,8 @@ class SSEBridge:
         }
         message = json.dumps(payload, ensure_ascii=False)
         try:
-            get_redis().publish(self._channel, message)
+            redis_async = await get_async_redis()
+            await redis_async.publish(self._channel, message)
         except Exception:
             logger.warning(
                 "SSE 发布失败（Redis 可能不可用）: task_id=%s, event=%s, seq=%d",

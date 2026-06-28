@@ -1,5 +1,5 @@
 <template>
-  <article ref="articleRef" class="report-article" @click="handleCitationClick">
+  <article ref="articleRef" class="report-article" @click="handleArticleClick">
     <div class="max-width-prose">
       <section
         v-for="section in sections"
@@ -32,7 +32,25 @@ function renderedContent(content) {
   return wrapCodeBlocks(html)
 }
 
-function handleCitationClick(e) {
+function handleArticleClick(e) {
+  // 1. 代码复制按钮点击
+  const copyBtn = e.target.closest('.code-copy-btn')
+  if (copyBtn) {
+    e.preventDefault()
+    const wrapper = copyBtn.closest('.code-block-wrapper')
+    const rawTextarea = wrapper?.querySelector('.code-raw')
+    if (!rawTextarea) return
+
+    navigator.clipboard.writeText(rawTextarea.value).then(() => {
+      copyBtn.classList.add('copied')
+      setTimeout(() => copyBtn.classList.remove('copied'), 1500)
+    }).catch((err) => {
+      console.error('复制代码失败', err)
+    })
+    return
+  }
+
+  // 2. 引用锚点点击
   const target = e.target.closest('.citation-link')
   if (!target) return
   e.preventDefault()

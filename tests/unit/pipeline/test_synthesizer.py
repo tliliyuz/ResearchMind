@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -199,7 +199,7 @@ class TestSynthesisSuccess:
     async def test_正常综合产出完整output并发送SSE(self, db_session):
         """正常综合产出 clusters/conflicts/gaps/overall_assessment，output 完整。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         notes = _valid_notes()
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
@@ -217,8 +217,8 @@ class TestSynthesisSuccess:
         assert output["completion_tokens"] == 500
         assert output["evidence_count"] == 2
 
-        progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
-        completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
+        progress_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_PROGRESS]
+        completed_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_COMPLETED]
         assert len(progress_calls) == 2
         assert "跨源综合" in progress_calls[0].args[1]["label"]
         assert progress_calls[1].args[1]["clusters_count"] == 1
@@ -240,7 +240,7 @@ class TestSynthesisSuccess:
             ],
             relevance_scores=[0.9, 0.95, 0.8],
         )
-        sse = MagicMock()
+        sse = AsyncMock()
         captured_messages = []
 
         async def _capture_and_return(*args, **kwargs):
@@ -267,7 +267,7 @@ class TestSynthesisSuccess:
             evidence_contents=[f"证据 {i}" for i in range(5)],
             relevance_scores=[0.9 - i * 0.05 for i in range(5)],
         )
-        sse = MagicMock()
+        sse = AsyncMock()
         captured_messages = []
 
         async def _capture_and_return(*args, **kwargs):
@@ -301,7 +301,7 @@ class TestSynthesisSuccess:
                 task_type=task_type,
                 task_suffix=f"type-{idx:03d}",
             )
-            sse = MagicMock()
+            sse = AsyncMock()
 
             with patch("app.pipeline.synthesizer.chat_completion", new=_capture_and_return):
                 await run_synthesis(task, synthesis_step, db_session, sse)
@@ -313,7 +313,7 @@ class TestSynthesisSuccess:
     async def test_conflicts为null_不阻断且输出空数组(self, db_session):
         """LLM 返回 conflicts: null → 不阻断，输出 conflicts==[]。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         notes = _valid_notes(conflicts=None)
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
@@ -323,7 +323,7 @@ class TestSynthesisSuccess:
         assert output["conflicts"] == []
         assert output["conflicts_count"] == 0
 
-        completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
+        completed_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_COMPLETED]
         assert len(completed_calls) == 1
         assert completed_calls[0].args[1]["conflicts"] == []
 
@@ -331,7 +331,7 @@ class TestSynthesisSuccess:
     async def test_越界索引被过滤不阻断(self, db_session):
         """supporting_evidence_indices 含越界值 → 过滤后建簇。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         notes = _valid_notes(supporting_indices=[0, 1, 999])
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
@@ -353,7 +353,7 @@ class TestSynthesisFailure:
     async def test_无效JSON重试后成功_retry_count为1_call_count为2(self, db_session):
         """第一次返回无效 JSON，第二次成功 → retry_count=1，call_count=2。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
             mock_llm.side_effect = [
@@ -370,7 +370,7 @@ class TestSynthesisFailure:
     async def test_无效JSON重试耗尽_抛出E3104_call_count为3(self, db_session):
         """LLM 持续返回无效 JSON，3 次重试耗尽 → E3104。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
             mock_llm.return_value = LLMResult(
@@ -391,7 +391,7 @@ class TestSynthesisFailure:
     async def test_LLM异常重试耗尽_抛出E3104_call_count为3(self, db_session):
         """LLM 持续异常，3 次重试耗尽 → E3104。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
             mock_llm.side_effect = RuntimeError("LLM 服务不可用")
@@ -406,7 +406,7 @@ class TestSynthesisFailure:
     async def test_空evidence_抛出E3104_不调用LLM(self, db_session):
         """没有 EvidenceItem → E3104，chat_completion 未被调用。"""
         task, synthesis_step = await _seed_synthesis_task(db_session, evidence_count=0)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.synthesizer.chat_completion") as mock_llm:
             with pytest.raises(SynthesisFailedException) as exc_info:

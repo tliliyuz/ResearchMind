@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-19 |
+| 最后更新 | 2026-06-28 |
 
 > 本文档是 **REST API 端点、请求/响应模型、SSE 事件协议、错误码体系** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。研究任务的输入输出数据契约、状态机语义见 [ARCHITECTURE.md](ARCHITECTURE.md)，Pipeline 各阶段深度设计见 [RESEARCH_PIPELINE.md](RESEARCH_PIPELINE.md)，表结构（持久化的请求/响应字段）见 [DATABASE.md](DATABASE.md)，产品需求见 [PRD.md](PRD.md)。
 
@@ -123,6 +123,7 @@
 | E3109 | 429 | LLM API 限流（指数退避后仍失败） |
 | E3110 | 401 | LLM 认证失败（重试无意义） |
 | E3111 | 500 | LLM 调用返回未预期错误 |
+| E3999 | 500 | 未预期的内部错误（Worker 兜底） |
 
 #### 系统通用错误（E9xxx）
 
@@ -1005,6 +1006,7 @@ Pipeline 各阶段失败。`recoverable` 决定是否可断点续跑，`retry_af
 | E3109 | 429 | `LLMRateLimited` | true | 3（指数退避） | LLM API 限流（指数退避后仍失败） |
 | E3110 | 401 | `LLMAuthFailed` | false | — | LLM 认证失败（重试无意义） |
 | E3111 | 500 | `LLMUnknownError` | true | 3 | LLM 调用返回未预期错误 |
+| E3999 | 500 | `UnknownInternal` | false | — | 未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底） |
 
 **`recoverable` 字段语义：**
 

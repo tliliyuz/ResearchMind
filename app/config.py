@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # ── Fetch ──
     FETCH_TIMEOUT: int = 15
     FETCH_MAX_CONTENT_LENGTH: int = 102400  # 100KB
+    FETCH_MAX_BODY_SIZE: int = 2 * 1024 * 1024  # 2MB，HTTP 响应体硬上限
+    FETCH_MAX_URLS_PER_TASK: int = 15  # 每任务 Fetch URL 硬上限
     FETCH_MAX_RETRIES: int = 1
 
     # ── Token 估算 ──

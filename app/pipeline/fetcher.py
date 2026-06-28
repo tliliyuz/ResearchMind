@@ -9,17 +9,13 @@
 """
 
 import asyncio
-import ipaddress
 import logging
-import socket
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.config import settings
 
 from app.config import settings
 from app.models.research_source import ResearchSource
@@ -31,64 +27,11 @@ from app.pipeline.sse_bridge import (
     EVENT_STEP_SKIPPED,
     EVENT_STEP_STARTED,
 )
+from app.utils.url_safety import check_url_safety
 
 logger = logging.getLogger(__name__)
 
-# ── 安全常量 ──────────────────────────────────────────────────
-
-_ALLOWED_PROTOCOLS = {"http", "https"}
-
-# 内网 IP 范围（CIDR 表示法）
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),       # 回环
-    ipaddress.ip_network("10.0.0.0/8"),         # A 类私有
-    ipaddress.ip_network("172.16.0.0/12"),      # B 类私有
-    ipaddress.ip_network("192.168.0.0/16"),     # C 类私有
-    ipaddress.ip_network("169.254.0.0/16"),     # 链路本地
-    ipaddress.ip_network("0.0.0.0/8"),           # 当前网络
-    ipaddress.ip_network("::1/128"),             # IPv6 回环
-    ipaddress.ip_network("fc00::/7"),            # IPv6 唯一本地
-    ipaddress.ip_network("fe80::/10"),           # IPv6 链路本地
-]
-
 _USER_AGENT = "ResearchMind/1.0 (research-agent; +https://github.com/ResearchMind)"
-_MAX_RESPONSE_BODY = 2 * 1024 * 1024  # 2MB，超过则跳过（config.py 未设此项，Phase4 评估后添加）
-
-
-async def _check_url_safety(url: str) -> str | None:
-    """URL 安全检查。返回 None = 通过，返回字符串 = 拒绝原因。
-
-    检查项（对齐 RESEARCH_PIPELINE.md §4.4）：
-    1. 协议白名单：仅 http/https
-    2. IP 黑名单：禁止内网 IP（SSRF 防护）
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return "URL 解析失败"
-
-    # 协议检查
-    if parsed.scheme.lower() not in _ALLOWED_PROTOCOLS:
-        return f"协议 {parsed.scheme} 不在白名单中（仅 http/https）"
-
-    hostname = parsed.hostname
-    if not hostname:
-        return "URL 缺少 hostname"
-
-    # IP 黑名单检查（SSRF 防护）
-    # DNS 解析通过 run_in_executor 异步化，避免阻塞 Worker 协程
-    try:
-        loop = asyncio.get_running_loop()
-        ip_addr = await loop.run_in_executor(None, socket.gethostbyname, hostname)
-        ip_obj = ipaddress.ip_address(ip_addr)
-        for network in _PRIVATE_NETWORKS:
-            if ip_obj in network:
-                return f"IP {ip_addr} 属于内网地址 {network}，拒绝访问（SSRF 防护）"
-    except (socket.gaierror, ValueError):
-        # DNS 解析失败 → 在 _fetch_one_url 中作为 fetch 失败处理，不在安全层拦截
-        pass
-
-    return None
 
 
 async def _fetch_one_url(
@@ -109,6 +52,12 @@ async def _fetch_one_url(
             "error": str | None,          # 错误描述（非 success）
         }
     """
+    # 初始 URL 安全检查
+    safety_error = await check_url_safety(url)
+    if safety_error:
+        return {"status": "blocked", "content": None, "content_length": None,
+                "error": f"安全拦截: {safety_error}"}
+
     timeout_config = httpx.Timeout(
         connect=10.0,
         read=settings.FETCH_TIMEOUT,
@@ -120,18 +69,43 @@ async def _fetch_one_url(
         async with httpx.AsyncClient(
             timeout=timeout_config,
             headers={"User-Agent": _USER_AGENT, "Accept": "text/html"},
-            follow_redirects=True,
-            max_redirects=5,
+            follow_redirects=False,
         ) as client:
-            response = await client.get(url)
+            current_url = url
+            redirect_count = 0
+            max_redirects = 5
+
+            while True:
+                response = await client.get(current_url)
+
+                # 处理重定向
+                if 300 <= response.status_code < 400:
+                    redirect_count += 1
+                    if redirect_count > max_redirects:
+                        return {"status": "blocked", "content": None, "content_length": None,
+                                "error": "重定向次数超过上限"}
+
+                    location = response.headers.get("location")
+                    if not location:
+                        return {"status": "blocked", "content": None, "content_length": None,
+                                "error": "重定向响应缺少 Location 头"}
+
+                    current_url = urljoin(str(response.url), location)
+                    safety_error = await check_url_safety(current_url)
+                    if safety_error:
+                        return {"status": "blocked", "content": None, "content_length": None,
+                                "error": f"重定向后安全拦截: {safety_error}"}
+                    continue
+
+                break
 
             # HTTP 状态码检查
             if response.status_code == 403:
                 return {"status": "blocked", "content": None, "content_length": None,
-                        "error": f"HTTP 403 Forbidden"}
+                        "error": "HTTP 403 Forbidden"}
             if response.status_code == 404:
                 return {"status": "blocked", "content": None, "content_length": None,
-                        "error": f"HTTP 404 Not Found"}
+                        "error": "HTTP 404 Not Found"}
             if response.status_code >= 500:
                 return {"status": "blocked", "content": None, "content_length": None,
                         "error": f"HTTP {response.status_code} Server Error"}
@@ -139,13 +113,24 @@ async def _fetch_one_url(
                 return {"status": "blocked", "content": None, "content_length": None,
                         "error": f"HTTP {response.status_code}"}
 
-            # 检查响应体大小
+            # 检查响应体大小（Content-Length 头作为早期拦截）
             content_length_header = response.headers.get("content-length")
-            if content_length_header and int(content_length_header) > _MAX_RESPONSE_BODY:
+            if content_length_header and int(content_length_header) > settings.FETCH_MAX_BODY_SIZE:
                 return {"status": "blocked", "content": None, "content_length": None,
                         "error": f"响应体过大: {content_length_header} bytes"}
 
-            html_content = response.text
+            # 流式读取并限制最大字节数，防止 Content-Length 缺失时内存耗尽
+            content_bytes = b""
+            async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                content_bytes += chunk
+                if len(content_bytes) > settings.FETCH_MAX_BODY_SIZE:
+                    return {"status": "blocked", "content": None, "content_length": None,
+                            "error": f"响应体超过 {settings.FETCH_MAX_BODY_SIZE} bytes 上限"}
+
+            try:
+                html_content = content_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                html_content = content_bytes.decode("latin-1", errors="replace")
 
     except httpx.TimeoutException:
         if retry_on_timeout:
@@ -248,12 +233,22 @@ async def run_fetch(
             "message": "无待抓取 URL",
         }
 
+    # 每任务 URL 硬上限：超出部分不处理
+    original_source_count = len(sources)
+    if original_source_count > settings.FETCH_MAX_URLS_PER_TASK:
+        logger.warning(
+            "Fetch URL 数量超过每任务硬限制 %d，截断处理: task_id=%s",
+            settings.FETCH_MAX_URLS_PER_TASK, task_id,
+        )
+        sources = sources[:settings.FETCH_MAX_URLS_PER_TASK]
+
     logger.info("Fetch 开始: task_id=%s, urls=%d", task_id, len(sources))
 
     fetched_results: list[dict] = []
     successful = 0
     failed = 0
     skipped_safety = 0
+    truncated_count = original_source_count - len(sources)
 
     for source in sources:
         url = source.url
@@ -266,7 +261,7 @@ async def run_fetch(
         child_step_id = str(child_step.id)
 
         # 发射子 step.started
-        sse_bridge.publish(EVENT_STEP_STARTED, {
+        await sse_bridge.publish(EVENT_STEP_STARTED, {
             "step_id": child_step_id,
             "step_type": "fetch",
             "label": child_step.label,
@@ -275,12 +270,12 @@ async def run_fetch(
         })
 
         # a. 安全检查
-        safety_error = await _check_url_safety(url)
+        safety_error = await check_url_safety(url)
         if safety_error:
             logger.warning("Fetch URL 安全拦截: url=%s, reason=%s", url, safety_error)
             source.fetch_status = "blocked"
             await _finish_fetch_child_step(session, child_step, "skipped")
-            sse_bridge.publish(EVENT_STEP_SKIPPED, {
+            await sse_bridge.publish(EVENT_STEP_SKIPPED, {
                 "step_id": child_step_id,
                 "url": url,
                 "reason": safety_error,
@@ -312,7 +307,7 @@ async def run_fetch(
                 "content_length": fetch_result["content_length"],
             }
             await _finish_fetch_child_step(session, child_step, "completed", child_output)
-            sse_bridge.publish(EVENT_STEP_COMPLETED, {
+            await sse_bridge.publish(EVENT_STEP_COMPLETED, {
                 "step_id": child_step_id,
                 "url": url,
                 "content_length": fetch_result["content_length"],
@@ -320,7 +315,7 @@ async def run_fetch(
         else:
             failed += 1
             await _finish_fetch_child_step(session, child_step, "skipped")
-            sse_bridge.publish(EVENT_STEP_SKIPPED, {
+            await sse_bridge.publish(EVENT_STEP_SKIPPED, {
                 "step_id": child_step_id,
                 "url": url,
                 "reason": fetch_result.get("error", "未知错误"),
@@ -346,6 +341,7 @@ async def run_fetch(
         "successful": successful,
         "failed": failed,
         "skipped_safety": skipped_safety,
+        "truncated": truncated_count,
     }
 
     logger.info(

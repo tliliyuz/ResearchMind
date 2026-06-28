@@ -8,10 +8,11 @@ from app.models.research_step import ResearchStep
 from app.models.research_source import ResearchSource
 from app.pipeline.fetcher import (
     run_fetch,
-    _check_url_safety,
     _extract_domain,
     _extract_title_from_content,
+    _fetch_one_url,
 )
+from app.utils.url_safety import check_url_safety
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -22,56 +23,56 @@ from app.pipeline.fetcher import (
 class TestCheckUrlSafety:
     """URL 安全检查：协议白名单 + IP 黑名单 SSRF 防护。
 
-    注：_check_url_safety 为私有函数，测试保留以覆盖 SSRF 安全关键路径。
+    注：check_url_safety 为私有函数，测试保留以覆盖 SSRF 安全关键路径。
     Phase3 后应通过 run_fetch 公共 API 间接覆盖。
     """
 
     @pytest.mark.asyncio
     async def test_https通过(self):
-        assert await _check_url_safety("https://example.com/page") is None
+        assert await check_url_safety("https://example.com/page") is None
 
     @pytest.mark.asyncio
     async def test_http通过(self):
-        assert await _check_url_safety("http://example.com/page") is None
+        assert await check_url_safety("http://example.com/page") is None
 
     @pytest.mark.asyncio
     async def test_file协议拒绝(self):
-        result = await _check_url_safety("file:///etc/passwd")
+        result = await check_url_safety("file:///etc/passwd")
         assert result is not None
         assert "file" in result
 
     @pytest.mark.asyncio
     async def test_ftp协议拒绝(self):
-        result = await _check_url_safety("ftp://example.com/file")
+        result = await check_url_safety("ftp://example.com/file")
         assert result is not None
         assert "ftp" in result
 
     @pytest.mark.asyncio
     async def test_localhost_127_拒绝(self):
-        result = await _check_url_safety("http://127.0.0.1:8080/admin")
+        result = await check_url_safety("http://127.0.0.1:8080/admin")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
     @pytest.mark.asyncio
     async def test_10段内网IP拒绝(self):
-        result = await _check_url_safety("http://10.0.0.1/api")
+        result = await check_url_safety("http://10.0.0.1/api")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
     @pytest.mark.asyncio
     async def test_192_168段内网IP拒绝(self):
-        result = await _check_url_safety("http://192.168.1.1/admin")
+        result = await check_url_safety("http://192.168.1.1/admin")
         assert result is not None
         assert "内网" in result or "拒绝" in result
 
     @pytest.mark.asyncio
     async def test_172_16段内网IP拒绝(self):
-        result = await _check_url_safety("http://172.16.0.1/api")
+        result = await check_url_safety("http://172.16.0.1/api")
         assert result is not None
 
     @pytest.mark.asyncio
     async def test_URL缺少hostname(self):
-        result = await _check_url_safety("http:///path-only")
+        result = await check_url_safety("http:///path-only")
         assert result is not None
 
 
@@ -187,7 +188,7 @@ class TestRunFetchSuccess:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
         self.db_session = AsyncMock()
 
     @pytest.mark.asyncio
@@ -239,7 +240,7 @@ class TestRunFetchSuccess:
             )
 
             event_types = [
-                c[0][0] for c in self.sse_bridge.publish.call_args_list
+                c[0][0] for c in self.sse_bridge.publish.await_args_list
             ]
             assert "step.started" in event_types
             assert "step.completed" in event_types
@@ -296,7 +297,7 @@ class TestRunFetchFailure:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
         self.db_session = AsyncMock()
 
     @pytest.mark.asyncio
@@ -401,3 +402,117 @@ class TestRunFetchFailure:
             assert output["successful"] == 0
             assert output["failed"] == 1
             assert mock_sources[0].content is None
+
+    @pytest.mark.asyncio
+    async def test_URL数量超过硬上限_截断处理(self):
+        # 构造 20 个 source
+        mock_sources = []
+        for i in range(20):
+            src = MagicMock(spec=ResearchSource)
+            src.id = 100 + i
+            src.url = f"https://example.com/article{i}"
+            src.fetch_status = None
+            src.content = None
+            mock_sources.append(src)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_sources
+        self.db_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("app.pipeline.fetcher._fetch_one_url") as mock_fetch:
+            mock_fetch.return_value = _make_fetch_success_result()
+
+            output = await run_fetch(
+                self.task, self.step, self.db_session, self.sse_bridge,
+            )
+
+            assert output["successful"] == 15
+            assert output["truncated"] == 5
+            assert mock_fetch.call_count == 15
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# URL 安全深度防御测试（SSRF 多地址 / IPv6 / 重定向）
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestUrlSafetyDefense:
+    """SSRF 深度防御：多 A 记录、IPv6、重定向链。"""
+
+    @pytest.mark.asyncio
+    async def test_多A记录_任一内网即拒绝(self):
+        """域名解析出多个 IP，只要有一个是内网地址就拒绝。"""
+        with patch("app.utils.url_safety.socket.getaddrinfo") as mock_getaddrinfo:
+            mock_getaddrinfo.return_value = [
+                (2, 1, 6, "", ("8.8.8.8", 0)),
+                (2, 1, 6, "", ("127.0.0.1", 0)),
+            ]
+            result = await check_url_safety("http://multi-a.example.com")
+            assert result is not None
+            assert "127.0.0.1" in result
+
+    @pytest.mark.asyncio
+    async def test_IPv6本地地址拒绝(self):
+        with patch("app.utils.url_safety.socket.getaddrinfo") as mock_getaddrinfo:
+            mock_getaddrinfo.return_value = [
+                (10, 1, 6, "", ("::1", 0, 0, 0)),
+            ]
+            result = await check_url_safety("http://ipv6-local.example.com")
+            assert result is not None
+            assert "::1" in result
+
+    @pytest.mark.asyncio
+    async def test_IPv6链路本地地址拒绝(self):
+        with patch("app.utils.url_safety.socket.getaddrinfo") as mock_getaddrinfo:
+            mock_getaddrinfo.return_value = [
+                (10, 1, 6, "", ("fe80::1", 0, 0, 0)),
+            ]
+            result = await check_url_safety("http://ipv6-link.example.com")
+            assert result is not None
+            assert "fe80" in result
+
+
+class TestFetchOneUrlDefense:
+    """_fetch_one_url 响应体大小与重定向安全测试。"""
+
+    @pytest.mark.asyncio
+    async def test_响应体超过2MB_被blocked(self):
+        with patch("app.pipeline.fetcher.httpx.AsyncClient") as mock_client_cls:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-length": str(2 * 1024 * 1024 + 1)}
+            mock_response.aiter_bytes = MagicMock(return_value=iter([b"x"]))
+
+            mock_client = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("app.pipeline.fetcher.check_url_safety") as mock_safety:
+                mock_safety.return_value = None
+                result = await _fetch_one_url("https://example.com/big")
+
+            assert result["status"] == "blocked"
+            assert "2" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_重定向到内网_被blocked(self):
+        with patch("app.pipeline.fetcher.httpx.AsyncClient") as mock_client_cls:
+            redirect_response = MagicMock()
+            redirect_response.status_code = 302
+            redirect_response.headers = {"location": "http://127.0.0.1/secret"}
+            redirect_response.url = "https://example.com/redirect"
+
+            mock_client = MagicMock()
+            mock_client.get = AsyncMock(return_value=redirect_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("app.pipeline.fetcher.check_url_safety") as mock_safety:
+                mock_safety.side_effect = [None, "内网地址"]
+                result = await _fetch_one_url("https://example.com/redirect")
+
+            assert result["status"] == "blocked"
+            assert "重定向后安全拦截" in result["error"]

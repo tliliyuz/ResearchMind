@@ -524,7 +524,7 @@ async def run_render(
         "explainer": 4,
         "analysis": 5,
     }.get(task_type, 4)
-    sse.publish(EVENT_STEP_PROGRESS, {
+    await sse.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "rendering",
         "label": f"正在渲染报告（预计 {expected_sections} 个章节）...",
@@ -550,14 +550,14 @@ async def run_render(
 
     # 8. 发布进度与完成事件
     citations_count = sum(len(s.sources) for s in sections)
-    sse.publish(EVENT_STEP_PROGRESS, {
+    await sse.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "rendering",
         "label": f"报告渲染完成：{len(sections)} 个章节，{citations_count} 处引用",
         "sections_completed": len(sections),
         "total_sections": len(sections),
     })
-    sse.publish(EVENT_STEP_COMPLETED, {
+    await sse.publish(EVENT_STEP_COMPLETED, {
         "step_id": step_id,
         "sections_count": len(sections),
         "citations_count": citations_count,

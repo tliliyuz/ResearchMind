@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_current_user, get_db, require_task_accessible
 from app.models.research_task import ResearchTask
 from app.models.research_step import ResearchStep
-from app.pipeline.sse_bridge import sse_event_stream
+from app.pipeline.sse_bridge import EVENT_TASK_STATUS_SNAPSHOT, sse_event_stream
 from app.schemas.research import ResearchCreateRequest
 from app.services.research_service import (
     cancel_task,
@@ -121,6 +121,10 @@ async def cancel_research_task(
     return {"code": "0", "message": "任务已取消", "data": result.model_dump()}
 
 
+# 任务终态集合：终态任务 SSE 只推送 snapshot 后关闭连接
+_TERMINAL_STATUSES = {"completed", "failed", "canceled", "partially_completed"}
+
+
 @router.get("/{task_id}/stream")
 async def stream_research_task_events(
     task: ResearchTask = Depends(require_task_accessible),
@@ -133,9 +137,27 @@ async def stream_research_task_events(
 
     连接时立即推送 task.status.snapshot（当前完整状态），
     后续增量推送 phase.* / step.* / task.* 事件。
+    终态任务只推送 snapshot 后关闭连接。
     """
     # 构建初始快照
     snapshot = await _build_snapshot(task, db)
+
+    # 终态任务：只推送 snapshot，不进入 Redis 订阅循环
+    if task.status in _TERMINAL_STATUSES:
+        from app.core.sse import format_sse_event
+
+        async def terminal_stream():
+            yield format_sse_event(EVENT_TASK_STATUS_SNAPSHOT, snapshot)
+
+        return StreamingResponse(
+            terminal_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            },
+        )
 
     # 流式生成器
     async def event_stream():
@@ -197,14 +219,21 @@ async def _build_snapshot(
     - error：错误信息（如果失败）
     - 时间戳
     """
-    # 刷新 task 以获取最新 steps（依赖 selectin 预加载）
-    steps: list[ResearchStep] = task.steps if hasattr(task, "steps") else []
+    from sqlalchemy import select as sa_select
+
+    # 显式查询 steps，避免依赖 task.steps 懒加载（在 async 上下文中触发 MissingGreenlet）
+    result = await db.execute(
+        sa_select(ResearchStep)
+        .where(ResearchStep.task_id == task.id)
+        .order_by(ResearchStep.started_at)
+    )
+    steps: list[ResearchStep] = list(result.scalars().all())
 
     # 步骤摘要
     steps_summary = []
     for s in steps:
         summary = {
-            "step_id": str(s.id),
+            "id": str(s.id),
             "step_type": s.step_type,
             "status": s.status,
             "label": s.label,

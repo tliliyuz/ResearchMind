@@ -234,7 +234,7 @@ class TestRunPlanningSuccess:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
 
     @pytest.mark.asyncio
     async def test_正常_Planning_返回_sub_questions(self):
@@ -304,7 +304,7 @@ class TestRunPlanningSuccess:
 
             # 应发射 progress 事件（含 sub_questions_generated）
             publish_calls = [
-                c for c in self.sse_bridge.publish.call_args_list
+                c for c in self.sse_bridge.publish.await_args_list
                 if "step.progress" in str(c)
             ]
             assert len(publish_calls) >= 1
@@ -317,7 +317,7 @@ class TestRunPlanningRetry:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
 
     @pytest.mark.asyncio
     async def test_首次校验失败_第二次通过(self):

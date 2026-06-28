@@ -206,7 +206,7 @@ async def run_search(
         child_step_id = str(child_step.id)
 
         # 发射子 step.started
-        sse_bridge.publish(EVENT_STEP_STARTED, {
+        await sse_bridge.publish(EVENT_STEP_STARTED, {
             "step_id": child_step_id,
             "step_type": "search",
             "label": child_step.label,
@@ -219,7 +219,7 @@ async def run_search(
             logger.warning("Search 子问题 %d 失败: %s", i, e)
             # 子 step → skipped
             await _finish_child_step(session, child_step, "skipped")
-            sse_bridge.publish(EVENT_STEP_SKIPPED, {
+            await sse_bridge.publish(EVENT_STEP_SKIPPED, {
                 "step_id": child_step_id,
                 "reason": f"子问题 {i} 搜索失败: {e}",
             })
@@ -234,7 +234,7 @@ async def run_search(
             continue
 
         results_count = len(results)
-        sse_bridge.publish(EVENT_STEP_PROGRESS, {
+        await sse_bridge.publish(EVENT_STEP_PROGRESS, {
             "step_id": child_step_id,
             "results_found": results_count,
         })
@@ -242,7 +242,7 @@ async def run_search(
         if results_count == 0:
             # 子 step → skipped（0 结果）
             await _finish_child_step(session, child_step, "skipped")
-            sse_bridge.publish(EVENT_STEP_SKIPPED, {
+            await sse_bridge.publish(EVENT_STEP_SKIPPED, {
                 "step_id": child_step_id,
                 "reason": f"子问题 {i} 搜索返回 0 结果",
             })
@@ -297,7 +297,7 @@ async def run_search(
             "urls": [r["url"] for r in selected_results],
         }
         await _finish_child_step(session, child_step, "completed", child_output)
-        sse_bridge.publish(EVENT_STEP_COMPLETED, {
+        await sse_bridge.publish(EVENT_STEP_COMPLETED, {
             "step_id": child_step_id,
             "results_count": results_count,
             "selected": len(selected_results),

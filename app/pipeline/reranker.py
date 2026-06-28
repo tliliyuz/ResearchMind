@@ -528,7 +528,7 @@ async def run_rerank(
 
     logger.info("Rerank BM25 粗筛完成: task_id=%s, candidates=%d", task_id, len(candidates))
 
-    sse_bridge.publish(EVENT_STEP_PROGRESS, {
+    await sse_bridge.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "reranking",
         "label": f"BM25 粗筛完成，{len(candidates)} 个候选进入精排",
@@ -538,7 +538,7 @@ async def run_rerank(
     if not candidates:
         raise RerankFailedException(detail="BM25 粗筛后候选为空")
 
-    sse_bridge.publish(EVENT_STEP_PROGRESS, {
+    await sse_bridge.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "reranking",
         "label": f"正在对 {len(candidates)} 个候选进行 LLM 精排...",
@@ -566,7 +566,7 @@ async def run_rerank(
 
     # 7. 质量警告（Evidence < 3 不阻断）
     if len(selected_evidence) < 3:
-        sse_bridge.publish(EVENT_TASK_WARNING, {
+        await sse_bridge.publish(EVENT_TASK_WARNING, {
             "step_id": step_id,
             "error_description": f"精排后 Evidence 数量 {len(selected_evidence)} < 3，可能影响后续综合质量",
         })
@@ -589,7 +589,7 @@ async def run_rerank(
         task_id, len(selected_evidence), avg_score, top_domains,
     )
 
-    sse_bridge.publish(EVENT_STEP_COMPLETED, {
+    await sse_bridge.publish(EVENT_STEP_COMPLETED, {
         "step_id": step_id,
         "evidence_count": len(selected_evidence),
         "avg_score": avg_score,

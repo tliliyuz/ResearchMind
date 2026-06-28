@@ -82,6 +82,9 @@ class TestSSEStateEndpoint:
         planning_steps = [s for s in snapshot["steps"] if s["step_type"] == "planning"]
         assert len(planning_steps) == 1
         assert planning_steps[0]["status"] == "completed"
+        # 字段名应为 id（与 API.md §3.6 对齐）
+        assert "id" in planning_steps[0]
+        assert planning_steps[0]["id"] == "sse-step-uuid-001"
 
     @pytest.mark.asyncio
     async def test_任务不存在_返回404(self, async_client: AsyncClient, auth_headers: dict):
@@ -185,6 +188,24 @@ class TestSSEStreamEndpoint:
             "/api/research/sse-task-uuid-001/stream",
         )
         assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_终态任务SSE只推送snapshot后关闭(self, async_client: AsyncClient, auth_headers: dict, db_session):
+        task = await _seed_task_for_sse(db_session)
+        task.status = "completed"
+        await db_session.flush()
+
+        response = await async_client.get(
+            "/api/research/sse-task-uuid-001/stream",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+        body = response.text
+        assert "event: task.status.snapshot" in body
+        # 终态任务不应进入 Redis 订阅循环，响应体应只包含 snapshot 事件
+        assert body.count("event:") == 1
 
 
 class TestSseSnapshotStructure:

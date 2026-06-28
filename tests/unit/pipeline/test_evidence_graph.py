@@ -1,6 +1,6 @@
 """Evidence Graph Build 阶段单元测试 —— 结构化认知资产组装。"""
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import sqlalchemy as sa
@@ -194,7 +194,7 @@ class TestEvidenceGraphSuccess:
     async def test_正常构建Graph_output结构完整(self, db_session):
         """正常构建产出完整 graph 字段，SSE 发射 step.progress。"""
         task, eg_step = await _seed_evidence_graph_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -213,7 +213,7 @@ class TestEvidenceGraphSuccess:
         assert output["source_count"] == 2
         assert isinstance(output["duration_ms"], int)
 
-        progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
+        progress_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_PROGRESS]
         assert len(progress_calls) == 2
         assert progress_calls[0].args[1]["label"] == "正在构建来源图谱..."
         assert progress_calls[1].args[1]["item_count"] == 2
@@ -229,7 +229,7 @@ class TestEvidenceGraphSuccess:
             relevance_scores=[0.75, 0.95, 0.85],
             synthesis_output=_valid_synthesis_output(supporting_indices=[0, 1, 2]),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -250,7 +250,7 @@ class TestEvidenceGraphSuccess:
             evidence_count=2,
             synthesis_output=_valid_synthesis_output(supporting_indices=[0, 1]),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -271,7 +271,7 @@ class TestEvidenceGraphSuccess:
                 conflicting_indices=[1],
             ),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -311,7 +311,7 @@ class TestEvidenceGraphSuccess:
         db_session.add(extra_ev)
         await db_session.flush()
 
-        sse = MagicMock()
+        sse = AsyncMock()
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
         sources = output["graph"]["sources"]
@@ -325,7 +325,7 @@ class TestEvidenceGraphSuccess:
     async def test_used_in_sections初始为空数组(self, db_session):
         """所有 items 的 used_in_sections 初始为空数组。"""
         task, eg_step = await _seed_evidence_graph_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -359,7 +359,7 @@ class TestEvidenceGraphSuccess:
                 "overall_assessment": "测试评估",
             },
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -378,7 +378,7 @@ class TestEvidenceGraphSuccess:
             source_domains=["example.com", "nist.gov", "arxiv.org", "blog.org"],
             synthesis_output=_valid_synthesis_output(supporting_indices=[0, 1]),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -403,7 +403,7 @@ class TestEvidenceGraphFailure:
             db_session,
             evidence_count=0,
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with pytest.raises(EvidenceGraphBuildFailedException) as exc_info:
             await run_evidence_graph(task, eg_step, db_session, sse)
@@ -429,7 +429,7 @@ class TestEvidenceGraphFailure:
         synthesis_step.output = None
         await db_session.flush()
 
-        sse = MagicMock()
+        sse = AsyncMock()
         with pytest.raises(EvidenceGraphBuildFailedException) as exc_info:
             await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -444,7 +444,7 @@ class TestEvidenceGraphFailure:
             evidence_count=2,
             synthesis_output=_valid_synthesis_output(supporting_indices=[0, 1, 999]),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -479,7 +479,7 @@ class TestEvidenceGraphFailure:
                 "overall_assessment": "测试",
             },
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -505,7 +505,7 @@ class TestEvidenceGraphConsistency:
             relevance_scores=[0.9, 0.8],
             synthesis_output=_valid_synthesis_output(supporting_indices=[0, 1]),
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
@@ -555,7 +555,7 @@ class TestEvidenceGraphConsistency:
         source.domain = None
         await db_session.flush()
 
-        sse = MagicMock()
+        sse = AsyncMock()
         output = await run_evidence_graph(task, eg_step, db_session, sse)
 
         item = output["graph"]["items"][0]

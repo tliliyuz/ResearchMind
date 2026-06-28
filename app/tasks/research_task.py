@@ -16,9 +16,11 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import update as sa_update
+
 from app.config import settings
 from app.core.database import async_session_factory
-from app.core.exceptions import AppException
+from app.core.exceptions import AppException, extract_recoverable_from_exception
 from app.core.trace_recorder import TraceRecorder
 from app.models.research_task import ResearchTask
 from app.pipeline.sse_bridge import SSEBridge
@@ -73,10 +75,11 @@ def execute_research_task(self, task_id: str) -> dict:
         return result
     except Exception as e:
         logger.exception("Celery 任务执行异常: task_id=%s, error=%s", task_id, e)
-        # 兜底：尝试同步写入失败状态
+        # 兜底：尝试写入失败状态，保留原异常的 recoverable 语义
         try:
             loop = _get_worker_loop()
-            loop.run_until_complete(_emergency_fail(task_id, str(e)))
+            recoverable = extract_recoverable_from_exception(e)
+            loop.run_until_complete(_emergency_fail(task_id, str(e), recoverable))
         except Exception:
             logger.exception("紧急写入失败状态也失败了: task_id=%s", task_id)
         return {"status": "failed", "task_id": task_id, "error": str(e)}
@@ -143,18 +146,32 @@ async def _run_pipeline(task_id: str) -> dict:
 # ── 紧急失败写入 ────────────────────────────────────────────
 
 
-async def _emergency_fail(task_id: str, error_msg: str) -> None:
+async def _emergency_fail(task_id: str, error_msg: str, recoverable: bool = False) -> bool:
     """兜底：在 Pipeline 完全崩溃时写入失败状态。
 
     独立 session，不依赖 Orchestrator 或任何可能出错的对象。
+    使用 CAS 仅当 status 为 pending/running 时才更新为 failed，避免覆盖终态。
+
+    Returns:
+        bool: CAS 成功返回 True，失败返回 False。
     """
     async with async_session_factory() as session:
-        task = await session.get(ResearchTask, task_id)
-        if task is None:
-            return
-        task.status = "failed"
-        task.completed_at = datetime.now(timezone.utc)
-        task.error_code = "E3999"
-        task.error_message = f"Celery Worker 未捕获异常: {error_msg[:500]}"
-        task.recoverable = False
+        result = await session.execute(
+            sa_update(ResearchTask)
+            .where(
+                ResearchTask.id == task_id,
+                ResearchTask.status.in_(["pending", "running"]),
+            )
+            .values(
+                status="failed",
+                completed_at=datetime.now(timezone.utc),
+                error_code="E3999",
+                error_message=f"Celery Worker 未捕获异常: {error_msg[:500]}",
+                recoverable=recoverable,
+            )
+        )
         await session.commit()
+        updated = result.rowcount > 0
+        if not updated:
+            logger.warning("紧急失败写入 CAS 失败，任务已非 pending/running: task_id=%s", task_id)
+        return updated

@@ -30,6 +30,26 @@
   - 失败视图居中显示，错误信息保留换行与滚动，并支持解析 JSON 字符串提取 `message` / `error_description`。
 
 ### Fixed
+- **Phase3 代码审查 A 批次修复（🔴 合并阻塞项，对应 REVIEW_FIX_PLAN.md 3.1-3.6）**：
+  - **后端并发与事务一致性**：
+    - `_start_task` 改为返回 `bool` 的 CAS 更新：`UPDATE research_tasks SET status='running' WHERE status='pending'`，`rowcount==0` 时 `run()` 直接退出，阻止并发 Worker 重复执行同一任务。
+    - `_handle_fatal_error` 先检查 `session.is_active` 再 `rollback()`，避免在 session 已失效时撤销已 flush 的 Step 失败状态；关键属性在 rollback 前缓存到本地变量，杜绝 `MissingGreenlet` 二次崩溃。
+    - `_emergency_fail` 改为 CAS 更新：`UPDATE ... WHERE status IN ('pending','running')`，终态任务（completed/canceled）不被覆盖；新增 `recoverable` 参数，兜底 `except` 通过 `extract_recoverable_from_exception()` 保留原异常可恢复语义。
+  - **SSE 与状态接口**：
+    - `/stream` 端点对终态任务（completed/failed/canceled）仅推送 `task.status.snapshot` 后立即关闭连接，不再进入 Redis 订阅循环，避免客户端对已结束任务无效挂起。
+    - `require_task_accessible` 改为 `select(ResearchTask).options(selectinload(ResearchTask.steps))` 显式预加载；`_build_snapshot` 改为显式查询 `research_steps` 表，字段名 `step_id` 修正为 `id`，与 `API.md §3.6` 示例对齐。
+    - `SSEBridge.publish` 由同步改为异步 `async def publish`，内部通过 `asyncio.to_thread` 调用同步 Redis 客户端，Celery Worker 事件循环不再被阻塞；所有调用点统一改为 `await self._sse.publish(...)`。
+  - **安全与 Fetch 限制**：
+    - 修复 SSRF 绕过：新增 `app/utils/url_safety.py::check_url_safety()`，使用 `socket.getaddrinfo()` 解析全部 IPv4/IPv6 地址，覆盖 `127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0/8`、`::1/128`、`fc00::/7`、`fe80::/10`、`ff00::/8`；Fetch 关闭 `follow_redirects=True`，改为手动跟随并对每个跳转目标复用安全检查。
+    - Fetch 阶段新增流式响应体读取，累计超过 `FETCH_MAX_BODY_SIZE`（2 MB）即标记为 `blocked`；每任务 URL 数硬上限 `FETCH_MAX_URLS_PER_TASK=15`，超出部分写入 step output `truncated` 字段。
+  - **错误码与迁移**：
+    - `E3999` 错误码登记入 `docs/API.md §1.4` 速查表与 §5.3 完整错误码表，描述为「未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底）」。
+    - Alembic 迁移 `c02701951a41` 将 `sa.DateTime(timezone=True)` 改为 `sa.DateTime()`，与 `UTCDateTime` 底层类型一致并补充 UTC 注释。
+  - **依赖注入健壮性**：
+    - `get_current_user` 使用 `getattr(request.state, "user_id", None)`，缺失或异常时抛 `InvalidTokenException(E1004)` 返回 401，避免 `AttributeError` 导致 500。
+  - **前端安全与功能**：
+    - `frontend/src/utils/markdown.js` 移除 `wrapCodeBlocks` 中的内联 `onclick` 与 `encodeURIComponent`，改为在渲染后的高亮 HTML 中提取原始代码文本并存入隐藏 `<textarea class="code-raw">`；`ReportArticle.vue` 通过事件委托读取 textarea value 写入剪贴板，消除 XSS 与 URL 编码污染。
+  - **测试覆盖**：新增/更新 `tests/unit/services/test_pipeline_orchestrator.py`（CAS 失败、fatal error 状态一致性）、`tests/unit/tasks/test_research_task.py`（`_emergency_fail` CAS + recoverable）、`tests/unit/api/test_sse.py`（终态 snapshot 关闭连接、`id` 字段）、`tests/unit/pipeline/test_fetcher.py`（SSRF 多 A 记录/IPv6/重定向/2MB/15 URL）、`tests/unit/test_dependencies.py`（`get_current_user` 缺失 state）、`frontend/src/utils/markdown.test.js`（无内联 onclick/无 URL 编码/textarea 原始代码），并批量将 SSE mock 由 `MagicMock` 替换为 `AsyncMock`。
 - **`app/evaluation/__init__.py` 移除未实现模块导入**：`question_bank` 模块尚未创建，但 `__init__.py` 已导出其符号，导致导入 `app.evaluation` 报 `ModuleNotFoundError`。暂时移除相关导入与 `__all__` 条目，使现有评估功能可正常导入；题目样本库功能待后续实现时再加回。
 - **报告页右侧面板固定分区与 Trace 常驻底部修复**：[Deviation/修复] 由于 `.research-page` 未声明高度，`.completed-state` / `.report-viewer` / `.report-body` 的 `height: 100%` / `flex: 1` 失去参照，导致来源过多时右侧面板无限增长、Trace 摘要被压到最底部。修复：`ResearchPage.vue` 增加 `.research-page { height: 100% }` 贯通高度链；`ReportViewer.vue` 将 `.report-side-panel` 改为 `overflow: hidden` 并给 `EvidencePanel`/`TracePanel` 分配固定 flex 分区；`EvidencePanel.vue` 移除 `flex-shrink: 0` 与 `justify-content: space-between`，增加 `min-height: 0`，使来源列表在侧栏上半部分内部滚动，Trace 始终可见。
 - **报告页三栏布局回归修复**：SectionNav / ReportArticle / EvidencePanel / ReportViewer 通过压缩内边距与增加卡片溢出约束适配窄栏，不再缩小字体导致不可读；Evidence 卡片改为「窄而长」垂直滚动，避免撑破容器。[Deviation]

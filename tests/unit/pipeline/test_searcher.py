@@ -175,7 +175,7 @@ class TestRunSearchSuccess:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
         self.db_session = AsyncMock()
         _mock_planning_in_session(self.db_session, self.DEFAULT_SUB_QUESTIONS)
 
@@ -240,7 +240,7 @@ class TestRunSearchSuccess:
 
             # 验证发射了 step.started / step.progress / step.completed
             event_types = [
-                c[0][0] for c in self.sse_bridge.publish.call_args_list
+                c[0][0] for c in self.sse_bridge.publish.await_args_list
             ]
             assert "step.started" in event_types
             assert "step.progress" in event_types
@@ -289,7 +289,7 @@ class TestRunSearchFailure:
     def _setup(self):
         self.task = _make_task()
         self.step = _make_step()
-        self.sse_bridge = MagicMock()
+        self.sse_bridge = AsyncMock()
         self.db_session = AsyncMock()
         _mock_planning_in_session(self.db_session, self.DEFAULT_SUB_QUESTIONS)
 

@@ -88,9 +88,13 @@ export function renderMarkdown(text) {
   return md.render(text)
 }
 
+
 /**
  * 生成带复制按钮的代码块包装 HTML
  * 对齐 FRONTEND.md §4.5.3：代码块一键复制
+ *
+ * 注意：不注入内联 onclick，复制逻辑由组件层通过事件委托处理。
+ * 从渲染后的 HTML 中提取代码文本（而非高亮 HTML），确保复制内容为原始代码。
  *
  * @param {string} html - 渲染后的 HTML
  * @returns {string} 包装后的 HTML
@@ -98,13 +102,22 @@ export function renderMarkdown(text) {
 export function wrapCodeBlocks(html) {
   return html.replace(
     /<pre><code(.*?)>([\s\S]*?)<\/code><\/pre>/g,
-    (match, attrs, code) => {
+    (match, attrs, highlightedCode) => {
+      // 从高亮 HTML 中提取纯文本（原始代码）
+      const rawCode = highlightedCode
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
       return `<div class="code-block-wrapper">
-        <button class="code-copy-btn" title="复制代码" onclick="navigator.clipboard.writeText(this.dataset.code); this.classList.add('copied'); setTimeout(() => this.classList.remove('copied'), 1500)" data-code="${encodeURIComponent(code)}">
+        <button class="code-copy-btn" title="复制代码" aria-label="复制代码">
           <i class="fas fa-copy"></i>
           <i class="fas fa-check"></i>
         </button>
-        <pre><code${attrs}>${code}</code></pre>
+        <textarea class="code-raw" style="display:none;" readonly>${rawCode}</textarea>
+        <pre><code${attrs}>${highlightedCode}</code></pre>
       </div>`
     }
   )

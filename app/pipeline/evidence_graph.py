@@ -326,7 +326,7 @@ async def run_evidence_graph(
 
     logger.info("Evidence Graph Build 开始: task_id=%s, max_sources=%d", task_id, max_sources)
 
-    sse.publish(EVENT_STEP_PROGRESS, {
+    await sse.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "building_evidence_graph",
         "label": "正在构建来源图谱...",
@@ -364,7 +364,7 @@ async def run_evidence_graph(
         duration_ms = int(delta.total_seconds() * 1000)
 
     # 8. 发布进度事件
-    sse.publish(EVENT_STEP_PROGRESS, {
+    await sse.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "building_evidence_graph",
         "label": f"来源图谱构建完成：{len(items)} 条来源，{len(clusters)} 个聚类",

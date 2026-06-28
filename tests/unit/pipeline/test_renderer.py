@@ -1,7 +1,7 @@
 """Report Render 阶段单元测试 —— 报告渲染、引用提取、持久化。"""
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -270,7 +270,7 @@ class TestRenderSuccess:
     async def test_正常渲染并持久化report_sections_and_section_evidence(self, db_session):
         """正常渲染产出完整 output，持久化 report_sections 与 section_evidence。"""
         task, render_step, evidence_items = await _seed_render_task(db_session, evidence_count=3)
-        sse = MagicMock()
+        sse = AsyncMock()
         sections = _valid_report_sections()
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
@@ -308,8 +308,8 @@ class TestRenderSuccess:
         assert evidence_items[1].used_in_sections == ["1"]
         assert evidence_items[2].used_in_sections == ["2"]
 
-        progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
-        completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
+        progress_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_PROGRESS]
+        completed_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_COMPLETED]
         assert len(progress_calls) == 2
         assert "渲染报告" in progress_calls[0].args[1]["label"]
         assert "报告渲染完成" in progress_calls[1].args[1]["label"]
@@ -324,7 +324,7 @@ class TestRenderSuccess:
                 task_type=task_type,
                 task_suffix=f"type-{idx:03d}",
             )
-            sse = MagicMock()
+            sse = AsyncMock()
             sections = [{"heading": "1. 测试", "content": "正文[来源0]。"}]
 
             with patch("app.pipeline.renderer.chat_completion") as mock_llm:
@@ -337,7 +337,7 @@ class TestRenderSuccess:
     async def test_引用按evidence_index去重排序(self, db_session):
         """同一章节内重复引用同一来源只保留一个，并按 evidence_index 排序。"""
         task, render_step, evidence_items = await _seed_render_task(db_session, evidence_count=3)
-        sse = MagicMock()
+        sse = AsyncMock()
         sections = [
             {
                 "heading": "1. 重复引用测试",
@@ -365,7 +365,7 @@ class TestRenderSuccess:
     async def test_无引用章节标记citation_issues(self, db_session):
         """章节正文无 [来源N] 时 sources 为空且 citation_issues=True。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         sections = [
             {"heading": "1. 有引用", "content": "正文[来源0]。"},
             {"heading": "2. 无引用", "content": "正文没有引用。"},
@@ -403,7 +403,7 @@ class TestRenderFailure:
     async def test_无效JSON重试后成功_retry_count为1_call_count为2(self, db_session):
         """第一次返回无效 JSON，第二次成功 → retry_count=1，call_count=2。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
             mock_llm.side_effect = [
@@ -420,7 +420,7 @@ class TestRenderFailure:
     async def test_无效JSON重试耗尽_抛出E3107_call_count为2(self, db_session):
         """LLM 持续返回无效 JSON，1 次重试耗尽 → E3107。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
             mock_llm.return_value = LLMResult(
@@ -441,7 +441,7 @@ class TestRenderFailure:
     async def test_LLM异常重试耗尽_抛出E3107_call_count为2(self, db_session):
         """LLM 持续异常，1 次重试耗尽 → E3107。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
             mock_llm.side_effect = RuntimeError("LLM 服务异常")
@@ -456,7 +456,7 @@ class TestRenderFailure:
     async def test_section数量不足不阻断(self, db_session):
         """LLM 返回 section 数量少于模板预期，不阻断。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         sections = [{"heading": "1. 只有一个章节", "content": "正文[来源0]。"}]
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
@@ -479,7 +479,7 @@ class TestRenderConsistency:
     async def test_引用指向非法index被过滤并标记citation_issues(self, db_session):
         """正文引用越界 index → 过滤掉并标记 citation_issues。"""
         task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
-        sse = MagicMock()
+        sse = AsyncMock()
         sections = [
             {
                 "heading": "1. 越界引用",
@@ -510,7 +510,7 @@ class TestRenderConsistency:
             evidence_count=1,
             graph_overrides={"items": []},
         )
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.renderer.chat_completion") as mock_llm:
             mock_llm.return_value = _mock_llm_report([{"heading": "1. 测试", "content": "正文"}])

@@ -291,7 +291,7 @@ async def run_planning(
         logger.info("Planning 第 %d/%d 次尝试: task_id=%s", attempt, settings.PIPELINE_PLANNER_MAX_RETRIES, task_id)
 
         # 发射进度
-        sse_bridge.publish(EVENT_STEP_PROGRESS, {
+        await sse_bridge.publish(EVENT_STEP_PROGRESS, {
             "step_id": step_id,
             "phase": "planning",
             "attempt": attempt,
@@ -332,7 +332,7 @@ async def run_planning(
         validation_errors = _validate_sub_questions(sub_questions)
         if not validation_errors:
             # 通过！发射 SSE 事件并返回
-            sse_bridge.publish(EVENT_STEP_PROGRESS, {
+            await sse_bridge.publish(EVENT_STEP_PROGRESS, {
                 "step_id": step_id,
                 "sub_questions_generated": len(sub_questions),
                 "sub_questions": sub_questions,

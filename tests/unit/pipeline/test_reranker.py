@@ -159,7 +159,7 @@ class TestRerankSuccess:
     async def test_正常Rerank_产生Evidence并持久化(self, db_session):
         """BM25 + LLM 精排后，EvidenceItem 写入 DB，output 字段完整。"""
         task, rerank_step = await _seed_rerank_task(db_session, max_sources=3)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         # 2 个 source × 2 paragraphs × top-3 per doc → 最多 4 candidates
         ratings = _valid_ratings(4)
@@ -191,8 +191,8 @@ class TestRerankSuccess:
         assert task.total_evidence == 3
 
         # 验证 SSE 进度事件携带 label
-        progress_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_PROGRESS]
-        completed_calls = [c for c in sse.publish.call_args_list if c.args[0] == EVENT_STEP_COMPLETED]
+        progress_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_PROGRESS]
+        completed_calls = [c for c in sse.publish.await_args_list if c.args[0] == EVENT_STEP_COMPLETED]
         assert len(progress_calls) == 2
         assert "BM25 粗筛完成" in progress_calls[0].args[1]["label"]
         assert "LLM 精排" in progress_calls[1].args[1]["label"]
@@ -216,7 +216,7 @@ class TestRerankSuccess:
             task, rerank_step = await _seed_rerank_task(
                 db_session, task_type=task_type, task_suffix=f"type-{idx:03d}"
             )
-            sse = MagicMock()
+            sse = AsyncMock()
 
             with patch("app.pipeline.reranker.chat_completion", new=_capture_and_return):
                 await run_rerank(task, rerank_step, db_session, sse)
@@ -233,7 +233,7 @@ class TestRerankSuccess:
     async def test_Evidence数量不足3_仅触发警告不阻断(self, db_session):
         """max_sources=1 导致只选出 1 条 Evidence，应发 warning 但任务继续。"""
         task, rerank_step = await _seed_rerank_task(db_session, max_sources=1)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         ratings = _valid_ratings(4)
 
@@ -246,7 +246,7 @@ class TestRerankSuccess:
 
         # 验证 warning 事件
         warning_calls = [
-            call for call in sse.publish.call_args_list
+            call for call in sse.publish.await_args_list
             if call.args[0] == "task.warning"
         ]
         assert len(warning_calls) == 1
@@ -281,7 +281,7 @@ class TestRerankFailure:
         source.content = None
         await db_session.flush()
 
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with pytest.raises(RerankFailedException) as exc_info:
             await run_rerank(task, rerank_step, db_session, sse)
@@ -303,7 +303,7 @@ class TestRerankFailure:
         planning_step.output = {"sub_questions": []}
         await db_session.flush()
 
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with pytest.raises(RerankFailedException) as exc_info:
             await run_rerank(task, rerank_step, db_session, sse)
@@ -315,7 +315,7 @@ class TestRerankFailure:
     async def test_LLM返回无效JSON_重试后仍失败_抛出E3105(self, db_session):
         """LLM 返回非 JSON，重试 2 次后仍失败 → E3105。"""
         task, rerank_step = await _seed_rerank_task(db_session)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.reranker.chat_completion") as mock_llm:
             mock_llm.return_value = LLMResult(
@@ -336,7 +336,7 @@ class TestRerankFailure:
     async def test_LLM重试耗尽_抛出E3105(self, db_session):
         """LLM 持续异常，重试耗尽 → E3105。"""
         task, rerank_step = await _seed_rerank_task(db_session)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         with patch("app.pipeline.reranker.chat_completion") as mock_llm:
             mock_llm.side_effect = RuntimeError("LLM 服务不可用")
@@ -360,7 +360,7 @@ class TestRerankScoring:
     async def test_Evidence按relevance_score降序排列(self, db_session):
         """LLM 给不同 score，最终 Evidence 按 relevance_score 降序。"""
         task, rerank_step = await _seed_rerank_task(db_session, max_sources=10)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         ratings = [
             {"segment_index": 0, "score": 5.0, "rationale": "低"},
@@ -385,7 +385,7 @@ class TestRerankScoring:
     async def test_relevance_score范围0到1(self, db_session):
         """LLM 0-10 分应归一化为 0-1 存入 evidence_items。"""
         task, rerank_step = await _seed_rerank_task(db_session, max_sources=2)
-        sse = MagicMock()
+        sse = AsyncMock()
 
         ratings = [
             {"segment_index": 0, "score": 0.0, "rationale": "最低"},

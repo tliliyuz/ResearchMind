@@ -485,7 +485,7 @@ async def run_synthesis(
         task_id, len(evidence_items), evidence_count,
     )
 
-    sse_bridge.publish(EVENT_STEP_PROGRESS, {
+    await sse_bridge.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "synthesizing",
         "label": f"正在对 {evidence_count} 条来源进行跨源综合...",
@@ -501,7 +501,7 @@ async def run_synthesis(
     )
 
     # 4. 进度事件（聚类完成）
-    sse_bridge.publish(EVENT_STEP_PROGRESS, {
+    await sse_bridge.publish(EVENT_STEP_PROGRESS, {
         "step_id": step_id,
         "phase": "synthesizing",
         "label": f"综合完成，生成 {len(notes.clusters)} 个观点聚类",
@@ -509,7 +509,7 @@ async def run_synthesis(
     })
 
     # 5. 完成事件
-    sse_bridge.publish(EVENT_STEP_COMPLETED, {
+    await sse_bridge.publish(EVENT_STEP_COMPLETED, {
         "step_id": step_id,
         "clusters": [_cluster_to_dict(c) for c in notes.clusters],
         "conflicts": [_conflict_to_dict(c) for c in notes.conflicts],

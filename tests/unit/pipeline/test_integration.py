@@ -116,7 +116,7 @@ class TestPlanningToSearchFlow:
         """Planning 产出的 sub_questions 被 Search 阶段正确读取。"""
         task = _make_mock_task()
         planning_step = _make_mock_step(step_type="planning", id="step-plan-001")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         # Phase 1: Planning
@@ -151,7 +151,7 @@ class TestPlanningToSearchFlow:
         """Planning 抛出 E3101 时 Search 不应被调用。"""
         task = _make_mock_task()
         planning_step = _make_mock_step(step_type="planning", id="step-plan-fail")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         with patch("app.pipeline.planner.chat_completion") as mock_llm:
@@ -175,7 +175,7 @@ class TestSearchToFetchFlow:
         """Search 阶段写入的 ResearchSource 行在 Fetch 阶段可查询。"""
         task = _make_mock_task()
         search_step = _make_mock_step(step_type="search", id="step-search-src")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         # 设置 Planning parent（MagicMock 避免 ORM 问题）
@@ -213,7 +213,7 @@ class TestSearchToFetchFlow:
         """全部子问题搜索失败抛出 E3102，Pipeline 终止。"""
         task = _make_mock_task()
         search_step = _make_mock_step(step_type="search", id="step-search-fail")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         parent = _make_mock_step(step_type="planning")
@@ -240,7 +240,7 @@ class TestPipelineSseEventSequence:
         """验证 Planning 阶段 SSE 事件包含 step.progress。"""
         task = _make_mock_task()
         step = _make_mock_step(step_type="planning", id="step-sse-plan")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         with patch("app.pipeline.planner.chat_completion") as mock_llm:
@@ -248,12 +248,12 @@ class TestPipelineSseEventSequence:
             await run_planning(task, step, db, sse)
 
         # 获取所有发布的事件类型
-        events = [c[0][0] for c in sse.publish.call_args_list]
+        events = [c[0][0] for c in sse.publish.await_args_list]
         assert "step.progress" in events  # 进度事件
 
         # step.progress 事件应包含 sub_questions_generated
         progress_calls = [
-            c for c in sse.publish.call_args_list
+            c for c in sse.publish.await_args_list
             if c[0][0] == "step.progress"
         ]
         last_progress = progress_calls[-1]
@@ -265,7 +265,7 @@ class TestPipelineSseEventSequence:
         """验证 Search 为每个子问题发射 step.started/step.completed。"""
         task = _make_mock_task()
         search_step = _make_mock_step(step_type="search", id="step-sse-search")
-        sse = MagicMock()
+        sse = AsyncMock()
         db = AsyncMock()
 
         parent = _make_mock_step(step_type="planning", id="step-sse-plan-parent")
@@ -283,7 +283,7 @@ class TestPipelineSseEventSequence:
 
             await run_search(task, search_step, db, sse)
 
-        events = [c[0][0] for c in sse.publish.call_args_list]
+        events = [c[0][0] for c in sse.publish.await_args_list]
         # 每个子问题至少有一个 started 和一个 completed
         started_count = events.count("step.started")
         completed_count = events.count("step.completed")

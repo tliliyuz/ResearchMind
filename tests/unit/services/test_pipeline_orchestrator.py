@@ -94,8 +94,11 @@ def _configure_async_mock_session(session: AsyncMock) -> None:
 
     同时默认 rowcount=1，避免 CAS 更新后把 AsyncMock 当整数比较失败。
     """
-    session.execute.return_value.scalar_one_or_none.return_value = None
-    session.execute.return_value.rowcount = 1
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_result.scalar.return_value = 0
+    mock_result.rowcount = 1
+    session.execute = AsyncMock(return_value=mock_result)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -123,12 +126,52 @@ class TestPhaseOrder:
             assert len(PHASE_LABELS[step_type]) > 0
 
     @pytest.mark.asyncio
+    async def test_CAS失败_不执行任何phase(self):
+        """_start_task CAS 失败时 run() 应直接返回，不调用任何 handler。"""
+        task = _make_task(status="running")  # 非 pending，触发 CAS 失败
+        session = AsyncMock()
+        _configure_async_mock_session(session)
+        # 模拟 CAS 更新 rowcount=0
+        session.execute.return_value.rowcount = 0
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+
+        handler_called = []
+        handlers = {
+            phase: _make_phase_handler() for phase in PHASE_ORDER
+        }
+        for phase in PHASE_ORDER:
+            original = handlers[phase]
+
+            async def wrapped(t, s, sess, sb, p=phase, orig=original):
+                handler_called.append(p)
+                return await orig(t, s, sess, sb)
+
+            handlers[phase] = wrapped
+
+        orchestrator = PipelineOrchestrator(
+            task=task, session=session, sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(), phase_handlers=handlers,
+        )
+
+        await orchestrator.run()
+
+        assert len(handler_called) == 0
+        # task.created 事件不应发送
+        created_calls = [
+            c for c in sse_bridge.publish.await_args_list
+            if c[0][0] == EVENT_TASK_CREATED
+        ]
+        assert len(created_calls) == 0
+
+    @pytest.mark.asyncio
     async def test_run_按顺序调用已注册phase_handler(self):
         """已注册 handler 的 phase 按 PHASE_ORDER 顺序被调用。"""
         task = _make_task()
         session = AsyncMock()
         _configure_async_mock_session(session)
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         call_order = []
@@ -157,7 +200,8 @@ class TestPhaseOrder:
         task = _make_task()
         session = AsyncMock()
         _configure_async_mock_session(session)
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         handlers = {"planning": _make_phase_handler()}
@@ -197,7 +241,8 @@ class TestIdempotentLock:
         """acquire_step_lock_async 返回 False → phase 被跳过且不抛异常。"""
         task = _make_task()
         session = AsyncMock()
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
         handlers = {"planning": _make_phase_handler()}
 
@@ -229,7 +274,8 @@ class TestFatalErrorTermination:
         task = _make_task()
         session = AsyncMock()
         _configure_async_mock_session(session)
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
         handlers = {
             "planning": _make_phase_handler(
@@ -249,7 +295,7 @@ class TestFatalErrorTermination:
 
         # 验证 task.failed 事件被发送
         task_failed_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_FAILED
         ]
         assert len(task_failed_calls) >= 1
@@ -265,7 +311,8 @@ class TestFatalErrorTermination:
         task.execution_context = {"last_completed_step_id": "some-step-uuid"}
         session = AsyncMock()
         _configure_async_mock_session(session)
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         call_order = []
@@ -290,7 +337,7 @@ class TestFatalErrorTermination:
 
         # 验证 task.failed 事件被发送且 recoverable=True
         failed_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_FAILED
         ]
         assert len(failed_calls) >= 1
@@ -300,7 +347,7 @@ class TestFatalErrorTermination:
 
         # 验证没有 warning 事件（所有 E31xx 均致命）
         warning_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_WARNING
         ]
         assert len(warning_calls) == 0
@@ -323,7 +370,8 @@ class TestFinalizeTask:
         task = _make_task(completed_steps=7, total_steps=7, total_evidence=10)
         task.status = "running"
         session = AsyncMock()
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         # 注册全部 7 个 phase handler
@@ -340,7 +388,7 @@ class TestFinalizeTask:
 
         # 验证 task.completed 事件被发送
         completed_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_COMPLETED
         ]
         assert len(completed_calls) >= 1
@@ -353,7 +401,8 @@ class TestFinalizeTask:
         task = _make_task()
         session = AsyncMock()
         _configure_async_mock_session(session)
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
         handlers = {
             "planning": _make_phase_handler(
@@ -372,7 +421,7 @@ class TestFinalizeTask:
                 await orchestrator.run()
 
         failed_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_FAILED
         ]
         assert len(failed_calls) >= 1
@@ -390,7 +439,8 @@ class TestCancelDetection:
     async def test_任务已取消_发送task_canceled事件(self):
         task = _make_task(status="canceled")
         session = AsyncMock()
-        sse_bridge = MagicMock()
+        _configure_async_mock_session(session)
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         # refresh 后 task.status 仍为 canceled
@@ -406,7 +456,7 @@ class TestCancelDetection:
         await orchestrator.run()
 
         canceled_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_CANCELED
         ]
         assert len(canceled_calls) == 1
@@ -429,8 +479,9 @@ class TestCostTracking:
 
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         session.refresh = AsyncMock()
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         # 构造真实 ResearchStep，便于断言 cost 字段
@@ -469,8 +520,9 @@ class TestCostTracking:
 
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         session.refresh = AsyncMock()
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         step = ResearchStep(
@@ -545,8 +597,9 @@ class TestCostTracking:
         """search 阶段完成后应调用 record_search 写入 trace。"""
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         session.refresh = AsyncMock()
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         step = ResearchStep(
@@ -584,8 +637,9 @@ class TestCostTracking:
         """fetch 阶段完成后应调用 record_fetch 写入 trace。"""
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         session.refresh = AsyncMock()
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         step = ResearchStep(
@@ -625,8 +679,9 @@ class TestCostTracking:
         """evidence_graph 阶段完成后应调用 record_evidence_graph 写入 trace。"""
         task = _make_task()
         session = AsyncMock()
+        _configure_async_mock_session(session)
         session.refresh = AsyncMock()
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
 
         step = ResearchStep(
@@ -676,15 +731,14 @@ class TestPipelineWithRealSession:
             user_id=user.id,
             topic="真实 session 测试",
             requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
-            status="running",
-            started_at=datetime.now(timezone.utc),
+            status="pending",
         )
         db_session.add(task)
         await db_session.flush()
 
         handlers = {phase: _make_phase_handler() for phase in PHASE_ORDER}
 
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
         trace_recorder = TraceRecorder(
             task_id=str(task.id), user_id=str(user.id), topic=task.topic
@@ -712,7 +766,7 @@ class TestPipelineWithRealSession:
         assert updated_task.status == "completed"
 
         completed_calls = [
-            c for c in sse_bridge.publish.call_args_list
+            c for c in sse_bridge.publish.await_args_list
             if c[0][0] == EVENT_TASK_COMPLETED
         ]
         assert len(completed_calls) == 1
@@ -734,9 +788,8 @@ class TestPipelineWithRealSession:
             user_id=user.id,
             topic="复用 planning step 测试",
             requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
-            status="running",
+            status="pending",
             total_steps=1,
-            started_at=datetime.now(timezone.utc),
         )
         db_session.add(task)
         await db_session.flush()
@@ -753,7 +806,7 @@ class TestPipelineWithRealSession:
 
         handlers = {phase: _make_phase_handler() for phase in PHASE_ORDER}
 
-        sse_bridge = MagicMock()
+        sse_bridge = AsyncMock()
         sse_bridge.task_id = str(task.id)
         trace_recorder = TraceRecorder(
             task_id=str(task.id), user_id=str(user.id), topic=task.topic
@@ -789,3 +842,68 @@ class TestPipelineWithRealSession:
         )
         updated_task = result.scalar_one()
         assert updated_task.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_fatal_error后_step和task均标记为failed(self, db_session):
+        """Phase handler 抛致命错误，Step 应持久化为 failed，Task 也应为 failed。"""
+        from app.core.exceptions import PlanningFailedException
+
+        user = User(
+            username="pipeline-fatal",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="fatal error 测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        async def failing_handler(task, step, session, sse_bridge):
+            raise PlanningFailedException("模拟 Planning 失败")
+
+        handlers = {phase: _make_phase_handler() for phase in PHASE_ORDER}
+        handlers["planning"] = failing_handler
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        trace_recorder = TraceRecorder(
+            task_id=str(task.id), user_id=str(user.id), topic=task.topic
+        )
+
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=trace_recorder,
+            phase_handlers=handlers,
+        )
+
+        with patch.object(db_session, "commit", new_callable=AsyncMock):
+            with patch("app.services.pipeline_orchestrator.acquire_step_lock_async", return_value=True):
+                with patch("app.services.pipeline_orchestrator.release_step_lock_async"):
+                    await orchestrator.run()
+
+        # 验证 planning step 状态为 failed
+        result = await db_session.execute(
+            sa_select(ResearchStep)
+            .where(ResearchStep.task_id == task.id, ResearchStep.step_type == "planning")
+        )
+        planning_step = result.scalar_one()
+        assert planning_step.status == "failed"
+        assert planning_step.error_code == "E3101"
+
+        # 验证 task 状态为 failed
+        result = await db_session.execute(
+            sa_select(ResearchTask).where(ResearchTask.id == task.id)
+        )
+        updated_task = result.scalar_one()
+        assert updated_task.status == "failed"
+        assert updated_task.error_code == "E3101"

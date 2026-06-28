@@ -30,6 +30,14 @@ class AppException(HTTPException):
         )
 
 
+def extract_recoverable_from_exception(error: Exception) -> bool:
+    """从异常中提取 recoverable 字段（优先读取 AppException.error_detail.recoverable）。"""
+    detail = getattr(error, "error_detail", None)
+    if isinstance(detail, dict):
+        return bool(detail.get("recoverable", False))
+    return False
+
+
 # ==================== 认证与权限错误 E1xxx ====================
 
 class UsernameExistsException(AppException):

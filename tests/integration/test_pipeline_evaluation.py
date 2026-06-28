@@ -210,7 +210,7 @@ async def _run_pipeline(db_session, task: ResearchTask, failing_url: str | None 
     """使用全 Mock 外部依赖跑通 Pipeline。"""
     task_id = task.id
     sse_bridge = SSEBridge(task_id)
-    sse_bridge.publish = MagicMock()
+    sse_bridge.publish = AsyncMock()
     trace = TraceRecorder(task_id=task_id, user_id=1, topic=task.topic)
     handlers = build_default_phase_handlers()
 

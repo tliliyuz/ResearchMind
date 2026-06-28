@@ -105,6 +105,10 @@ class ThreadedRedisClient:
         """异步 PING"""
         return await asyncio.to_thread(self._sync.ping)
 
+    async def publish(self, channel: str, message: str) -> Any:
+        """异步 PUBLISH"""
+        return await asyncio.to_thread(self._sync.publish, channel, message)
+
     async def close(self) -> None:
         """关闭同步客户端连接"""
         await asyncio.to_thread(self._sync.close)
