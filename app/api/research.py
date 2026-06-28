@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ValidationFailedException
+from app.core.exceptions import ValidationFailedException, sanitize_error_message_for_client
 
 logger = logging.getLogger(__name__)
 from app.dependencies import get_current_user, get_db, require_task_accessible
@@ -302,7 +302,7 @@ async def _build_snapshot(
                 summary["failed"] = s.output.get("failed")
         if s.status == "failed":
             summary["error_code"] = s.error_code
-            summary["error_message"] = s.error_message
+            summary["error_message"] = sanitize_error_message_for_client(s.error_message)
         if s.duration_ms is not None:
             summary["duration_ms"] = s.duration_ms
 
@@ -338,7 +338,7 @@ async def _build_snapshot(
     if task.error_code:
         snapshot["error"] = {
             "error_code": task.error_code,
-            "error_message": task.error_message,
+            "error_message": sanitize_error_message_for_client(task.error_message),
             "recoverable": task.recoverable,
         }
 

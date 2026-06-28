@@ -82,7 +82,8 @@ def execute_research_task(self, task_id: str) -> dict:
             loop.run_until_complete(_emergency_fail(task_id, str(e), recoverable))
         except Exception:
             logger.exception("紧急写入失败状态也失败了: task_id=%s", task_id)
-        return {"status": "failed", "task_id": task_id, "error": str(e)}
+        # 禁止将原始异常/SQL 等内部细节返回给调用方
+        return {"status": "failed", "task_id": task_id}
 
 
 # ── 异步主逻辑 ──────────────────────────────────────────────
@@ -105,10 +106,15 @@ async def _run_pipeline(task_id: str) -> dict:
             logger.error("任务不存在: task_id=%s", task_id)
             return {"status": "error", "task_id": task_id, "reason": "TaskNotFound"}
 
-        # 幂等检查：非 pending 状态 → 跳过（可能已被其他 Worker 拾取或已取消）
-        if task.status != "pending":
+        # 幂等检查：pending → 正常执行；running → Worker 崩溃恢复；终态 → 跳过
+        if task.status == "running":
             logger.warning(
-                "任务非 pending 状态，跳过执行: task_id=%s, status=%s",
+                "任务处于 running，按 Worker 崩溃恢复继续执行: task_id=%s",
+                task_id,
+            )
+        elif task.status != "pending":
+            logger.warning(
+                "任务非 pending/running 状态，跳过执行: task_id=%s, status=%s",
                 task_id, task.status,
             )
             return {"status": "skipped", "task_id": task_id, "reason": f"status={task.status}"}
@@ -146,11 +152,14 @@ async def _run_pipeline(task_id: str) -> dict:
 # ── 紧急失败写入 ────────────────────────────────────────────
 
 
-async def _emergency_fail(task_id: str, error_msg: str, recoverable: bool = False) -> bool:
+async def _emergency_fail(task_id: str, error_msg: str | None = None, recoverable: bool = False) -> bool:
     """兜底：在 Pipeline 完全崩溃时写入失败状态。
 
     独立 session，不依赖 Orchestrator 或任何可能出错的对象。
     使用 CAS 仅当 status 为 pending/running 时才更新为 failed，避免覆盖终态。
+
+    Args:
+        error_msg: 原始异常描述，仅用于服务端日志排查，不会写入 task.error_message。
 
     Returns:
         bool: CAS 成功返回 True，失败返回 False。
@@ -166,7 +175,8 @@ async def _emergency_fail(task_id: str, error_msg: str, recoverable: bool = Fals
                 status="failed",
                 completed_at=datetime.now(timezone.utc),
                 error_code="E3999",
-                error_message=f"Celery Worker 未捕获异常: {error_msg[:500]}",
+                # 禁止将原始异常/SQL/堆栈暴露给前端，统一使用兜底文案
+                error_message="未预期的内部错误，请稍后重试",
                 recoverable=recoverable,
             )
         )
@@ -174,4 +184,9 @@ async def _emergency_fail(task_id: str, error_msg: str, recoverable: bool = Fals
         updated = result.rowcount > 0
         if not updated:
             logger.warning("紧急失败写入 CAS 失败，任务已非 pending/running: task_id=%s", task_id)
+        elif error_msg:
+            logger.warning(
+                "紧急失败原始信息（服务端记录）: task_id=%s, error=%s",
+                task_id, error_msg[:1000],
+            )
         return updated

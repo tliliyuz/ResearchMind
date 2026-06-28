@@ -9,6 +9,7 @@ import pytest
 from app.core.exceptions import (
     AdminPermissionRequiredException,
     AppException,
+    CeleryWorkerLostException,
     EvidenceGraphBuildFailedException,
     InsufficientEvidenceException,
     InternalServerException,
@@ -43,6 +44,9 @@ from app.core.exceptions import (
     UserDisabledException,
     UsernameExistsException,
     ValidationFailedException,
+    get_error_type,
+    get_safe_error_message,
+    sanitize_error_message_for_client,
 )
 
 
@@ -336,6 +340,21 @@ class TestLLMUnknownException:
         assert exc.error_detail["recoverable"] is True
 
 
+class TestCeleryWorkerLostException:
+    def test_错误码为E3112_HTTP状态码为500(self):
+        exc = CeleryWorkerLostException()
+        assert exc.error_code == "E3112"
+        assert exc.status_code == 500
+
+    def test_recoverable为True(self):
+        exc = CeleryWorkerLostException()
+        assert exc.error_detail["recoverable"] is True
+
+    def test_error_type为CeleryWorkerLost(self):
+        exc = CeleryWorkerLostException()
+        assert exc.error_detail["error_type"] == "CeleryWorkerLost"
+
+
 # ═══════════════════════════════════════════════════════════════
 # E9xxx — 系统通用错误
 # ═══════════════════════════════════════════════════════════════
@@ -407,3 +426,71 @@ class TestAppException:
         assert exc.detail["message"] == "msg"
         assert exc.detail["detail"]["error_type"] == "T"
         assert exc.detail["detail"]["error_description"] == "D"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 错误消息安全化辅助函数
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestGetSafeErrorMessage:
+    def test_AppException返回友好message(self):
+        exc = PlanningFailedException("自定义 detail")
+        assert get_safe_error_message(exc) == "LLM 无法拆解研究主题"
+
+    def test_未知异常返回兜底文案(self):
+        exc = RuntimeError("This Session's transaction has been rolled back... [SQL: INSERT...]")
+        msg = get_safe_error_message(exc)
+        assert msg == "未预期的内部错误，请稍后重试"
+        assert "SQL" not in msg
+        assert "transaction" not in msg
+
+    def test_可自定义fallback(self):
+        exc = ValueError("bad")
+        assert get_safe_error_message(exc, fallback="自定义兜底") == "自定义兜底"
+
+
+class TestGetErrorType:
+    def test_AppException返回内部error_type(self):
+        exc = SearchFailedException()
+        assert get_error_type(exc) == "SearchFailed"
+
+    def test_未知异常返回fallback(self):
+        exc = RuntimeError("boom")
+        assert get_error_type(exc) == "UnknownInternal"
+
+    def test_可自定义fallback(self):
+        exc = RuntimeError("boom")
+        assert get_error_type(exc, fallback="CustomFallback") == "CustomFallback"
+
+
+class TestSanitizeErrorMessageForClient:
+    def test_None返回None(self):
+        assert sanitize_error_message_for_client(None) is None
+
+    def test_友好消息原样返回(self):
+        assert sanitize_error_message_for_client("任务不存在") == "任务不存在"
+
+    def test_含SQL语句替换为兜底文案(self):
+        raw = "Celery Worker 未捕获异常: [SQL: INSERT INTO research_sources ...]"
+        assert sanitize_error_message_for_client(raw) == "未预期的内部错误，请稍后重试"
+        assert "SQL" not in sanitize_error_message_for_client(raw)
+
+    def test_含Traceback替换为兜底文案(self):
+        raw = "Traceback (most recent call last):\n  File 'app.py', line 1, in <module>'"
+        assert sanitize_error_message_for_client(raw) == "未预期的内部错误，请稍后重试"
+
+    def test_JSON字符串提取友好message(self):
+        raw = '{"code": "E3110", "message": "LLM 认证失败", "detail": {"error_type": "LLMAuthFailed"}}'
+        assert sanitize_error_message_for_client(raw) == "LLM 认证失败"
+
+    def test_JSON提取后仍含内部信息则兜底(self):
+        raw = '{"message": "Error: [SQL: INSERT INTO ...]"}'
+        assert sanitize_error_message_for_client(raw) == "未预期的内部错误，请稍后重试"
+
+    def test_空字符串返回兜底文案(self):
+        assert sanitize_error_message_for_client("   ") == "未预期的内部错误，请稍后重试"
+
+    def test_可自定义fallback(self):
+        raw = "[SQL: SELECT * FROM users]"
+        assert sanitize_error_message_for_client(raw, fallback="系统繁忙") == "系统繁忙"

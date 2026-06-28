@@ -19,6 +19,8 @@
 import math
 from typing import Any
 
+from app.core.exceptions import sanitize_error_message_for_client
+
 # ── 致命停止（FATAL）的 Step 错误码 ────────────────────────────
 # 这些错误一旦发生，Pipeline 立即停止，Task 判定 FAILED。
 # 但"致命停止"≠"不可恢复"：recoverable 由异常自身携带，orchestrator 据实传播。
@@ -114,7 +116,9 @@ class TaskStateResolver:
             if step.status == "failed" and step.error_code in FATAL_STEP_ERROR_CODES:
                 return {
                     "error_code": step.error_code,
-                    "error_message": step.error_message or "致命错误，任务无法继续",
+                    "error_message": sanitize_error_message_for_client(
+                        step.error_message, fallback="致命错误，任务无法继续"
+                    ),
                     "recoverable": step.error_code in RECOVERABLE_STEP_ERROR_CODES,
                 }
         return None

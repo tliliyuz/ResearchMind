@@ -5,7 +5,29 @@
 与 docmind 基类 `AppException.detail: str`（扁平字符串）不同。
 """
 
+import json
+import re
+
 from fastapi import HTTPException
+
+
+# 内部技术信息特征，用于识别不应暴露给客户端的错误消息
+_INTERNAL_ERROR_PATTERNS = [
+    r"\[SQL:",                              # SQL 语句
+    r"Traceback\s+\(most recent call last\)",  # Python 堆栈
+    r"Celery Worker 未捕获异常",              # Worker 未捕获异常前缀
+    r"This Session's transaction has been rolled back",
+    r"Original exception was",
+    r"pymysql\.",
+    r"sqlalchemy\.",
+    r"<\?xml",                              # XML 内容
+    r"<!DOCTYPE",
+]
+
+_INTERNAL_ERROR_REGEX = re.compile(
+    "|".join(f"(?:{p})" for p in _INTERNAL_ERROR_PATTERNS),
+    re.IGNORECASE,
+)
 
 
 class AppException(HTTPException):
@@ -36,6 +58,98 @@ def extract_recoverable_from_exception(error: Exception) -> bool:
     if isinstance(detail, dict):
         return bool(detail.get("recoverable", False))
     return False
+
+
+# Worker 对外展示的安全错误描述兜底文案
+_SAFE_ERROR_MESSAGE_FALLBACK = "未预期的内部错误，请稍后重试"
+
+
+def get_safe_error_message(error: Exception, fallback: str = _SAFE_ERROR_MESSAGE_FALLBACK) -> str:
+    """返回对外展示的安全错误描述，避免暴露 SQL/堆栈/JSON 等内部细节。
+
+    - AppException 子类：使用其 error_message（已定义为用户可读中文）
+    - 其他未捕获异常：返回兜底文案，原始异常仅记录服务端日志
+    """
+    if isinstance(error, AppException):
+        return error.error_message
+    return fallback
+
+
+def get_error_type(error: Exception, fallback: str = "UnknownInternal") -> str:
+    """返回标准化的错误类型标识（优先使用 AppException 内部 error_type）。"""
+    if isinstance(error, AppException):
+        detail = getattr(error, "error_detail", None)
+        if isinstance(detail, dict):
+            return detail.get("error_type") or fallback
+    return fallback
+
+
+def _extract_readable_message(text: str) -> str | None:
+    """尝试从 JSON/类 JSON 字符串中提取用户可读的 message 或 error_description。"""
+    for pattern in (
+        r'"message"\s*:\s*"([^"]+)"',
+        r"'message'\s*:\s*'([^']+)'",
+        r'"error_description"\s*:\s*"([^"]+)"',
+        r"'error_description'\s*:\s*'([^']+)'",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+
+    brace_idx = text.find("{")
+    if brace_idx == -1:
+        return None
+
+    candidate = None
+    try:
+        parsed = json.loads(text[brace_idx:])
+        if isinstance(parsed, dict):
+            candidate = (
+                parsed.get("message")
+                or parsed.get("error_description")
+                or (parsed.get("detail") or {}).get("message")
+                or (parsed.get("detail") or {}).get("error_description")
+            )
+    except json.JSONDecodeError:
+        try:
+            # 容忍单引号 JSON（部分异常序列化产物）
+            parsed = json.loads(text[brace_idx:].replace("'", '"'))
+            if isinstance(parsed, dict):
+                candidate = (
+                    parsed.get("message")
+                    or parsed.get("error_description")
+                    or (parsed.get("detail") or {}).get("message")
+                    or (parsed.get("detail") or {}).get("error_description")
+                )
+        except Exception:
+            pass
+
+    return candidate if isinstance(candidate, str) else None
+
+
+def sanitize_error_message_for_client(
+    raw: str | None,
+    fallback: str = _SAFE_ERROR_MESSAGE_FALLBACK,
+) -> str | None:
+    """对客户端展示的错误消息做安全化清洗。
+
+    - None -> None
+    - 含 SQL/堆栈/异常类名等内部技术信息 -> fallback
+    - JSON/类 JSON -> 尝试提取 message/error_description；提取结果仍含内部信息 -> fallback
+    - 其余 -> 原样返回（允许已知 AppException 的友好 message 通过）
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raw = str(raw)
+
+    candidate = _extract_readable_message(raw) or raw
+    candidate = candidate.strip()
+
+    if not candidate or _INTERNAL_ERROR_REGEX.search(candidate):
+        return fallback
+
+    return candidate
 
 
 # ==================== 认证与权限错误 E1xxx ====================
@@ -299,6 +413,20 @@ class LLMUnknownException(AppException):
         super().__init__(
             "E3111", "LLM 调用返回未预期错误", 500,
             {"error_type": "LLMUnknown", "error_description": detail or "LLM 调用返回未预期错误", "recoverable": True, "retry_after_ms": 3000},
+        )
+
+
+class CeleryWorkerLostException(AppException):
+    """Celery Worker 崩溃/丢失（可断点续跑）。"""
+
+    def __init__(self, detail: str = ""):
+        super().__init__(
+            "E3112", "Celery Worker 崩溃或丢失", 500,
+            {
+                "error_type": "CeleryWorkerLost",
+                "error_description": detail or "Celery Worker 崩溃或丢失，任务可断点续跑",
+                "recoverable": True,
+            },
         )
 
 

@@ -9,6 +9,7 @@
 """
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -46,6 +47,52 @@ async def seed_test_users(db_session: AsyncSession):
         if existing is None:
             db_session.add(u)
     await db_session.flush()
+
+
+# ═══════════════════════════════════════════════════════════════
+# GET /api/health/workers — Worker 集群健康检查
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestWorkerHealthAPI:
+    """GET /api/health/workers"""
+
+    async def test_无worker_返回no_workers(self, async_client: AsyncClient):
+        with patch("app.main.celery_app.control.ping", return_value=[]) as mock_ping:
+            response = await async_client.get("/api/health/workers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["data"]["status"] == "no_workers"
+        assert data["data"]["worker_count"] == 0
+        assert data["data"]["workers"] == []
+        mock_ping.assert_called_once_with(timeout=5.0)
+
+    async def test_有worker_返回worker列表(self, async_client: AsyncClient):
+        with patch(
+            "app.main.celery_app.control.ping",
+            return_value=[{"celery@worker1": {"ok": "pong"}}, {"celery@worker2": {"ok": "pong"}}],
+        ) as mock_ping:
+            response = await async_client.get("/api/health/workers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["data"]["status"] == "healthy"
+        assert data["data"]["worker_count"] == 2
+        assert set(data["data"]["workers"]) == {"celery@worker1", "celery@worker2"}
+
+    async def test_ping异常_返回unknown但不报错(self, async_client: AsyncClient):
+        with patch("app.main.celery_app.control.ping", side_effect=RuntimeError("broker down")) as mock_ping:
+            response = await async_client.get("/api/health/workers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["data"]["status"] == "unknown"
+        assert data["data"]["worker_count"] == 0
+        assert "broker down" in data["data"]["error"]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -325,6 +372,30 @@ class TestGetResearchDetailAPI:
         )
         assert response.status_code == 200
         assert response.json()["data"]["topic"] == "审计目标"
+
+    async def test_失败任务详情_脏error_message被清洗(
+        self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession
+    ):
+        """存量任务 error_message 含 SQL/异常文本时，接口返回应被清洗为兜底文案。"""
+        task = ResearchTask(
+            user_id=1,
+            topic="脏数据测试",
+            requirements={"task_type": "analysis"},
+            status="failed",
+            error_code="E3999",
+            error_message="Celery Worker 未捕获异常: [SQL: INSERT INTO research_sources ...]",
+            recoverable=False,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        response = await async_client.get(f"/api/research/{task.id}", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "failed"
+        assert data["error_code"] == "E3999"
+        assert data["error_message"] == "未预期的内部错误，请稍后重试"
+        assert "SQL" not in data["error_message"]
 
 
 # ═══════════════════════════════════════════════════════════════

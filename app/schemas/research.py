@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.exceptions import sanitize_error_message_for_client
+
 
 # ── 研究要求子模型 ──────────────────────────────────────────────
 
@@ -93,6 +95,12 @@ class ResearchTaskResponse(BaseModel):
     completed_at: datetime | None = Field(None, description="完成时间")
 
     model_config = {"from_attributes": True}
+
+    @field_validator("error_message", mode="before")
+    @classmethod
+    def _sanitize_error_message(cls, v):
+        """接口层兜底清洗：防止存量脏数据（SQL/堆栈/JSON）泄露到前端。"""
+        return sanitize_error_message_for_client(v)
 
 
 # ── 列表项响应 ──────────────────────────────────────────────────

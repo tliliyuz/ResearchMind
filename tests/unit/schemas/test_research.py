@@ -284,3 +284,35 @@ class TestResearchTaskResponse:
         assert resp.status == "failed"
         assert resp.error_code == "E3101"
         assert resp.recoverable is False
+
+    def test_错误消息含SQL时被清洗(self):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        resp = ResearchTaskResponse(
+            task_id="uuid-1",
+            topic="失败的研究",
+            status="failed",
+            requirements={"task_type": "analysis"},
+            created_at=now,
+            error_code="E3999",
+            error_message="Celery Worker 未捕获异常: [SQL: INSERT INTO research_sources ...]",
+            recoverable=False,
+        )
+        assert resp.error_message == "未预期的内部错误，请稍后重试"
+        assert "SQL" not in resp.error_message
+
+    def test_错误消息为JSON时提取友好message(self):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        raw = '{"code": "E3110", "message": "LLM 认证失败"}'
+        resp = ResearchTaskResponse(
+            task_id="uuid-1",
+            topic="失败的研究",
+            status="failed",
+            requirements={"task_type": "analysis"},
+            created_at=now,
+            error_code="E3110",
+            error_message=raw,
+            recoverable=False,
+        )
+        assert resp.error_message == "LLM 认证失败"

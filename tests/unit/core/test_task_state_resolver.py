@@ -269,6 +269,22 @@ class TestTaskStateResolver:
         assert err["error_code"] == "E3101"
         assert err["recoverable"] is False
 
+    def test_Fatal失败_脏error_message被清洗(self):
+        """Step error_message 含 SQL/异常文本时，Resolver 返回的 error_info 应被清洗。"""
+        task = _make_task()
+        steps = [
+            _make_step(
+                "failed",
+                error_code="E3102",
+                error_message="Celery Worker 未捕获异常: [SQL: INSERT INTO research_sources ...]",
+            ),
+        ]
+        status, err = self.resolver.resolve(task, steps, evidence_count=10)
+        assert status == "failed"
+        assert err["error_code"] == "E3102"
+        assert err["error_message"] == "致命错误，任务无法继续"
+        assert "SQL" not in err["error_message"]
+
 
 # ═══════════════════════════════════════════════════════════════
 # TestFatalStepErrorCodes
