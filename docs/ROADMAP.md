@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-26 |
+| 最后更新 | 2026-06-28 |
 
 > 本文档是 **开发排期、Phase 顺序、任务依赖关系** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。
 
@@ -38,7 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
-> Phase 3 ✅ 已完成：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ✅ | §4.6 成本追踪 ✅ | §4.7 前端运行态/完成态 ✅。
+> Phase 3 ✅ 已完成：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ✅ | §4.6 成本追踪 ✅ | §4.7 前端运行态/完成态 ✅。Phase 4 §5.1 Execution Context + 断点续跑 ✅。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -282,7 +282,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
 | ✅ | BM25 粗筛（Stage 1） | `app/pipeline/reranker.py` — FetchedDoc[] 按 `\n\n` 段落切分（≤2000字符/段）→ jieba 分词 → BM25Okapi 对每个 SubQuestion 评分 → 每文档取 top-3 segments → 最多 45 候选 | 决策 #19 |
-| ✅ | LLM Rerank 精排（Stage 2） | DeepSeek API 调用：注入 `task_type` 加权维度（comparison→属性对齐度 / explainer→观点新颖度 / analysis→因果关联度），0-10 评分，输出 `Evidence[]`（top-K，K=min(max_sources, 候选数)） | 决策 #20 |
+| ✅ | LLM Rerank 精排（Stage 2） | LLM_FLASH_MODEL (DeepSeek API) 调用：注入 `task_type` 加权维度（comparison→属性对齐度 / explainer→观点新颖度 / analysis→因果关联度），0-10 评分，输出 `Evidence[]`（top-K，K=min(max_sources, 候选数)） | 决策 #20 |
 | ✅ | Rerank Prompt 模板 | 相关性（40%）+ 信息量（30%）+ 权威性（15%）+ `task_type_dimension`（15%）四维评分 | 决策 #21 |
 | ✅ | Rerank 失败策略 | BM25 候选为空→E3105 / LLM Rerank 失败→重试 2 次→仍失败→E3105 / Evidence 数量<3→质量警告不阻断 | — |
 
@@ -430,12 +430,12 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ⏳ | Execution Context 完整实现 | 每个 Step 完成后原子更新 `execution_context`（`current_phase` / `last_completed_step_id` / `execution_pointer` / `progress`），与 Step 状态写入在同一事务内 | 决策 #28 |
-| ⏳ | Checkpoint 保存 | Planning 完成后 / 每个 Fetch URL 成功后 / Synthesis 完成后保存 checkpoint | 决策 #29 |
-| ⏳ | Retry API | `POST /api/research/{task_id}/retry` — 读取 `execution_context`，从 `last_completed_step_id` 的下一个 Step 恢复，复用已完成 Step 的 output，Evidence 只 INSERT 不 DELETE | 决策 #30 |
-| ⏳ | Retry 前置校验 | `task.status` 必须为 `failed` / `partially_completed` / `canceled` 且 `recoverable=true` → 否则 E2003 | — |
-| ⏳ | CAS 状态更新 | 所有 Task 状态更新使用 `UPDATE ... WHERE status = 'old_value'`，更新失败则重试 | 决策 #31 |
-| ⏳ | Step 幂等执行 | Step 执行前检查 `status`：已是终态（`completed`/`failed`/`skipped`）则跳过执行 | — |
+| ✅ | Execution Context 完整实现 | 每个 Step 完成后原子更新 `execution_context`（`current_phase` / `last_completed_step_id` / `execution_pointer` / `progress`），与 Step 状态写入在同一事务内 | 决策 #28 |
+| ✅ | Checkpoint 保存 | Planning 完成后 / 每个 Fetch URL 成功后 / Synthesis 完成后保存 checkpoint | 决策 #29 |
+| ✅ | Retry API | `POST /api/research/{task_id}/retry` — 读取 `execution_context`，从 `last_completed_step_id` 的下一个 Step 恢复，复用已完成 Step 的 output，Evidence 只 INSERT 不 DELETE | 决策 #30 |
+| ✅ | Retry 前置校验 | `task.status` 必须为 `failed` / `partially_completed` / `canceled` 且 `recoverable=true` → 否则 E2003 | — |
+| ✅ | CAS 状态更新 | 所有 Task 状态更新使用 `UPDATE ... WHERE status = 'old_value'`，更新失败则重试 | 决策 #31 |
+| ✅ | Step 幂等执行 | Step 执行前检查 `status`：已是终态（`completed`/`failed`/`skipped`）则跳过执行；`_create_step()` 三层复用（completed/skipped→复用 / pending/running→崩溃恢复 / failed→新建） | — |
 
 ### 5.2 [后端] 基础设施加固
 
@@ -466,9 +466,9 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 测试类型 | 说明 |
 |:---|:---|:---|:---|
-| ⏳ | Execution Context 原子更新测试 | 单元测试 | checkpoint 写入与 Step 状态在同一事务 / Worker 崩溃后从 checkpoint 恢复 / 恢复后复用已完成 Step output |
-| ⏳ | Retry API 接口测试 | 接口测试 | `POST /api/research/{task_id}/retry` 正常断点续跑 + E2003（running 态拒绝）+ E2001/E2002 + 恢复后 Step 不重复执行 + Evidence 只追加 |
-| ⏳ | CAS 状态更新测试 | 单元测试 | 并发 Worker 状态覆盖防护 / `UPDATE WHERE status='old_value'` 冲突后重试逻辑 |
+| ✅ | Execution Context 原子更新测试 | 单元测试 | checkpoint 写入与 Step 状态在同一事务 / Worker 崩溃后从 checkpoint 恢复 / 恢复后复用已完成 Step output |
+| ✅ | Retry API 接口测试 | 接口测试 | `POST /api/research/{task_id}/retry` 正常断点续跑 + E2003（running 态拒绝）+ E2001/E2002 + 恢复后 Step 不重复执行 + Evidence 只追加 |
+| ✅ | CAS 状态更新测试 | 单元测试 | 并发 Worker 状态覆盖防护 / `UPDATE WHERE status='old_value'` 冲突后重试逻辑 |
 | ⏳ | 结构化日志测试 | 单元测试 | JSONFormatter 输出 / RequestID 注入 / Pipeline 各阶段 duration_ms 记录 |
 | ⏳ | 限流中间件测试 | 接口+单元 | IP 提取 / 路由规则 / 阈值获取 / 集成（超限返回 E9004 + Retry-After 头 + 降级放行） |
 | ⏳ | 错误处理测试 | 单元测试 | E3108(LLM Timeout) / E3109(LLM Rate Limit) / E3110(LLM Auth) / E3111(LLM Unknown) 异常映射 + 生产环境堆栈屏蔽 + 未知异常兜底 |

@@ -123,6 +123,7 @@
 | E3109 | 429 | LLM API 限流（指数退避后仍失败） |
 | E3110 | 401 | LLM 认证失败（重试无意义） |
 | E3111 | 500 | LLM 调用返回未预期错误 |
+| E3112 | 500 | Celery Worker 崩溃/丢失（可断点续跑） |
 | E3999 | 500 | 未预期的内部错误（Worker 兜底） |
 
 #### 系统通用错误（E9xxx）
@@ -851,6 +852,50 @@ SSE 连接端点，研究过程实时推送。事件协议详见 §4。
 
 ---
 
+### 3.5 系统健康检查
+
+#### GET `/api/health/workers`
+
+**权限**：公开（运维端点，无需认证）
+
+检查 Celery Worker 集群健康状态。调用 `celery_app.control.ping(timeout=5.0)` 获取活跃 Worker 列表。
+
+**响应** (200) — 有 Worker：
+
+```json
+{
+  "code": "0",
+  "message": "ok",
+  "data": {
+    "status": "healthy",
+    "worker_count": 2,
+    "workers": ["celery@host1", "celery@host2"]
+  }
+}
+```
+
+**响应** (200) — 无 Worker：
+
+```json
+{
+  "code": "0",
+  "message": "ok",
+  "data": {
+    "status": "no_workers",
+    "worker_count": 0,
+    "workers": []
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| status | string | `healthy` 或 `no_workers`（非错误，仅表示当前无活跃 Worker） |
+| worker_count | int | 活跃 Worker 数量 |
+| workers | string[] | Worker 节点名称列表（Celery `ping()` 返回的 `{hostname: ok}` 键名） |
+
+---
+
 ## 4. SSE 事件协议
 
 > **SSE 实现方式**：手动 `StreamingResponse`（非 `sse-starlette`），完全控制事件序列。每 15 秒发送 `: ping\n\n` 注释帧（SSE 心跳）保持连接，防止 Nginx/Cloudflare 代理超时断连。浏览器忽略注释帧。
@@ -1007,6 +1052,7 @@ Pipeline 各阶段失败。`recoverable` 决定是否可断点续跑，`retry_af
 | E3109 | 429 | `LLMRateLimited` | true | 3（指数退避） | LLM API 限流（指数退避后仍失败） |
 | E3110 | 401 | `LLMAuthFailed` | false | — | LLM 认证失败（重试无意义） |
 | E3111 | 500 | `LLMUnknownError` | true | 3 | LLM 调用返回未预期错误 |
+| E3112 | 500 | `CeleryWorkerLost` | true | — | Celery Worker 崩溃/丢失（DB checkpoint 完整，可从 `execution_context` 断点续跑） |
 | E3999 | 500 | `UnknownInternal` | false | — | 未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底） |
 
 **`recoverable` 字段语义：**
@@ -1286,6 +1332,7 @@ Content-Type: application/json
 | GET | `/api/research/{task_id}/report` | user（owner + admin） | 获取报告 |
 | GET | `/api/research/{task_id}/stream` | user（owner + admin） | SSE 连接 |
 | GET | `/api/research/{task_id}/state` | user（owner + admin） | 执行状态快照 |
+| GET | `/api/health/workers` | 公开 | Worker 集群健康检查 |
 
 > **权限层级说明**：
 > - **公开**：无需登录即可访问

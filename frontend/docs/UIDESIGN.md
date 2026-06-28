@@ -174,8 +174,8 @@
     --rm-header-height: 56px;
     --rm-content-max-width: 672px;        /* max-w-2xl — 创建表单最大宽 */
     --rm-report-max-width: 768px;         /* max-w-3xl — 报告正文最大宽 */
-    --rm-evidence-panel-width: 320px;     /* w-80 — 来源图谱面板宽 */
-    --rm-section-nav-width: 240px;        /* w-60 — 章节目录宽 */
+    --rm-evidence-panel-width: 184px;     /* 来源图谱面板宽（展开态） */
+    --rm-section-nav-width: 160px;        /* 章节目录宽 */
     --rm-input-height: 40px;
     --rm-user-menu-min-width: 200px;       /* 用户菜单卡片最小宽度 */
     --rm-trace-bar-height: 3px;            /* Trace 阶段条高度 */
@@ -291,7 +291,7 @@ body {
 
 | 层 | 技术 | 说明 |
 |:---|:---|:---|
-| 网点纹理 | `radial-gradient(circle at 1px 1px, …)` | 24px 间距，1px 白色微点（4% 透明度），增加织物般细腻质感 |
+| 网点纹理 | `radial-gradient(circle at 1px 1px, …)` | 24px 间距，1px 白色微点（10% 透明度），增加织物般细腻质感 |
 | 底色渐变 | `linear-gradient(135deg, …)` | slate-900 → slate-800 → slate-900，135° 对角线，暗而不沉闷 |
 
 > 两种背景层通过 `background-size` 解耦：纹理层 24px 循环平铺，渐变层 100% 覆盖视口。
@@ -1131,7 +1131,7 @@ position: relative;
 
 ```css
 .section-nav {
-    width: var(--rm-section-nav-width);            /* 240px */
+    width: var(--rm-section-nav-width);            /* 160px */
     background: var(--rm-bg-card);
     border-right: 1px solid var(--rm-border);
     overflow-y: auto;

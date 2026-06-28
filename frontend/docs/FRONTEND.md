@@ -48,7 +48,7 @@
 
 > `authStore` 的 `refresh()` action 调 `POST /api/auth/refresh` 换取新 token 对，配合 `scheduleRefresh()` 定时器在 access_token 到期前 1 分钟自动刷新。`refresh_token` 通过 `localStorage` 持久化，页面刷新后仍可用。
 >
-> **taskStore**：管理研究任务的完整生命周期——列表、创建、SSE 进度追踪、取消、重试。`current` 保存当前聚焦的任务详情（含 pipeline 阶段、步骤进度）。`sseStatus` 追踪 SSE 连接状态（`disconnected` / `connecting` / `connected` / `error`）。
+> **taskStore**：管理研究任务的完整生命周期——列表、创建、SSE 进度追踪、取消、重试。`current` 保存当前聚焦的任务详情（含 pipeline 阶段、步骤进度）。`sseStatus` 追踪 SSE 连接状态（`disconnected` / `connecting` / `connected` / `reconnecting` / `error`）。
 >
 > **reportStore**：管理已完成任务的研究报告——章节列表、Evidence Graph、Trace 摘要。报告数据通过 `GET /api/research/{task_id}/report` 获取，前端负责 Markdown 渲染 + 引用锚点滚动联动。
 
@@ -221,7 +221,7 @@ ResearchPage 是 ResearchMind 的核心页面，承载三个主要状态：**任
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Sidebar (260px/64px收起)      │  Main Content               │
+│  Sidebar (256px/64px收起)      │  Main Content               │
 │  ─────────────────────────────┤  ─────────────────────────  │
 │  Logo + 新建研究               │  状态栏：当前任务标题 + 状态   │
 │  ─────────────────────────────┤  ─────────────────────────  │
@@ -631,7 +631,7 @@ POST /api/research/{task_id}/retry
 #### 4.6.5 侧边栏展开/收起
 
 - **切换按钮**：侧边栏顶部右侧，`fa-chevron-left`（展开态）/ `fa-chevron-right`（收起态）
-- **展开态**（260px）：Logo 图标 + 副标题 + 新建研究按钮（含文字）+ 导航项（图标 + 文字）+ 用户信息（头像 + 用户名 + 角色，点击弹出用户菜单）
+- **展开态**（256px）：Logo 图标 + 副标题 + 新建研究按钮（含文字）+ 导航项（图标 + 文字）+ 用户信息（头像 + 用户名 + 角色，点击弹出用户菜单）
 - **收起态**（64px）：Logo 图标居中 + 新建研究「+」图标按钮 + 导航项（仅图标，hover 显示 `title` tooltip）+ 用户头像居中
 - **过渡动画**：`width var(--dm-transition-normal)`（0.2s ease）
 - **状态管理**：`Sidebar.vue` 本地 `ref`，不持久化（刷新恢复展开）
@@ -959,23 +959,23 @@ POST /api/research/{task_id}/retry
 
 ## 11. 实现状态
 
-| 模块 | 当前状态 | Phase 1 实现 | 后续 Phase |
-|:---|:---|:---|:---|
-| 项目脚手架 | ⏳ 未开始 | Vite + Vue 3 + 依赖安装 + 目录结构 | — |
-| Design Token 系统 | ⏳ 未开始 | `--rm-*` CSS 变量全局样式 | — |
-| Auth 体系 | ⏳ 未开始 | LoginPage + authStore + Axios 拦截器 + 路由守卫 | — |
-| AppLayout + Sidebar | ⏳ 未开始 | 布局框架 + 侧边栏 + 用户菜单 | — |
-| ResearchPage（创建态） | ⏳ 未开始 | 任务提交表单 + 研究类型选择卡片 + 快捷示例 | — |
-| ResearchPage（运行态） | ⏳ 未开始 | Pipeline 进度条 + Step 日志 + SSE 连接管理 | — |
-| ResearchPage（完成态） | ⏳ 未开始 | 报告查看 + 章节导航 + 来源图谱面板 + Trace 摘要 | — |
-| HistoryPage | ⏳ 未开始 | 任务历史列表 + 筛选 + 分页 | — |
-| AdminLayout | ⏳ 未开始 | 管理后台布局 + Admin 侧边栏 | Phase 6 |
-| AdminStats | ⏳ 未开始 | 统计卡片 + ECharts 图表 | Phase 6 |
-| AdminTaskList | ⏳ 未开始 | 跨用户任务列表 + 筛选 + 取消/删除 | Phase 6 |
-| AdminUserList | ⏳ 未开始 | 用户列表 + 禁用/启用 + 重置密码 | Phase 6 |
-| SSE 解析器 | ⏳ 未开始 | fetch + ReadableStream 解析 + 15 种事件处理（v1.0）+ 2 种预留 [v2] | — |
-| Markdown 渲染器 | ⏳ 未开始 | markdown-it + highlight.js + `[来源N]` 锚点解析 | — |
-| 响应式适配 | ⏳ 未开始 | 1280px 断点 + Sidebar 收起 | — |
+| 模块 | 当前状态 | 实现 Phase |
+|:---|:---|:---|
+| 项目脚手架 | ✅ 已完成 | Phase 1 |
+| Design Token 系统 | ✅ 已完成 | Phase 1 |
+| Auth 体系 | ✅ 已完成 | Phase 1 |
+| AppLayout + Sidebar | ✅ 已完成 | Phase 1 |
+| ResearchPage（创建态） | ✅ 已完成 | Phase 2 |
+| ResearchPage（运行态） | ✅ 已完成 | Phase 2 |
+| ResearchPage（完成态） | ✅ 已完成 | Phase 3 |
+| HistoryPage | ✅ 已完成 | Phase 2 |
+| AdminLayout | ✅ 已完成 | Phase 5 |
+| StatsPage | ✅ 已完成 | Phase 5 |
+| AdminTaskList | ✅ 已完成 | Phase 5 |
+| AdminUserList | ✅ 已完成 | Phase 5 |
+| SSE 解析器 | ✅ 已完成 | Phase 2 |
+| Markdown 渲染器 | ✅ 已完成 | Phase 1 |
+| 响应式适配 | ✅ 已完成 | Phase 3 |
 
 ---
 

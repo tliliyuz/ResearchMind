@@ -40,7 +40,7 @@ ResearchMind 在工程结构（分层、表设计、Auth、错误码体例）上
 
 ## 快速开始
 
-> **当前状态**：项目处于设计阶段，尚未开始编码。以下为启动后端开发的最小步骤（计划中）。
+> **当前状态**：Phase 1-3 已完成（Auth + 研究任务 CRUD + Pipeline 全链路 + 前端核心页面）。以下为启动开发环境的步骤。
 
 ```bash
 # 1. 克隆仓库
@@ -83,6 +83,9 @@ celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
 | [ROADMAP.md](docs/ROADMAP.md) | 版本演进路线 — v1.0 / v1.5 / v2.0 |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发环境搭建、项目结构、编码约定 |
 | [CHANGELOG.md](docs/CHANGELOG.md) | 变更日志（Keep a Changelog 格式） |
+| [TESTING_STRATEGY.md](docs/TESTING_STRATEGY.md) | 测试策略 — 测试金字塔、Mock 策略、覆盖率目标、离线评估 |
+| [FRONTEND.md](frontend/docs/FRONTEND.md) | 前端交互真理源 — 页面流程、组件行为、SSE 状态机 |
+| [UIDESIGN.md](frontend/docs/UIDESIGN.md) | UI 设计规范 — Design Token、组件样式、布局尺寸 |
 
 ---
 

@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-20 |
+| 最后更新 | 2026-06-28 |
 
 > 本文档为 ResearchMind 的开发环境搭建、项目结构、编码约定与常用命令参考。架构设计见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
@@ -23,7 +23,7 @@
 
 ## 2. 项目结构（计划）
 
-> 最后更新：2026-06-20（同步自 FRONTEND.md 及 ARCHITECTURE.md 设计）
+> 最后更新：2026-06-28（同步自代码实际状态）
 
 ```
 ResearchMind/
@@ -71,19 +71,21 @@ ResearchMind/
 │   │
 │   ├── models/                     # SQLAlchemy ORM 模型
 │   │   ├── __init__.py
+│   │   ├── _types.py               # 自定义列类型（UTCDateTime 等）
+│   │   ├── enums.py                # 共享枚举定义
 │   │   ├── user.py                 # 用户表
+│   │   ├── refresh_token.py        # Refresh Token 表
 │   │   ├── research_task.py        # 研究任务表
-│   │   ├── execution_context.py    # 执行上下文表（断点续跑）
-│   │   ├── evidence.py             # 证据表（Evidence Graph）
-│   │   ├── trace.py                # 链路追踪表
-│   │   └── refresh_token.py        # Refresh Token 表
+│   │   ├── research_step.py        # 执行步骤表（Step 状态 + I/O）
+│   │   ├── research_source.py      # 来源表（URL + 抓取内容）
+│   │   ├── evidence_item.py        # 证据条目表（Evidence Graph）
+│   │   ├── report_section.py       # 报告章节表（嵌套结构）
+│   │   └── section_evidence.py     # 章节-证据关联表（M:N）
 │   │
 │   ├── schemas/                    # Pydantic 请求/响应 Schema
 │   │   ├── __init__.py
 │   │   ├── auth.py                 # RegisterRequest / LoginRequest / TokenResponse
-│   │   ├── research.py             # ResearchCreate / ResearchResponse / TaskListResponse
-│   │   ├── evidence.py             # EvidenceItem / EvidenceGraphResponse
-│   │   └── trace.py                # TraceResponse / TraceSummary
+│   │   └── research.py             # ResearchCreate / ResearchResponse / TaskListResponse
 │   │
 │   ├── core/                       # 基础设施
 │   │   ├── __init__.py
@@ -110,7 +112,7 @@ ResearchMind/
 │   ├── tasks/                      # Celery 任务定义
 │   │   ├── __init__.py
 │   │   ├── celery_app.py           # Celery 配置（DB/Redis 集成）
-│   │   └── research_tasks.py       # 研究任务异步执行（Worker 入口）
+│   │   └── research_task.py        # 研究任务异步执行（Worker 入口）
 │   │
 │   └── middleware/                 # 中间件
 │       ├── __init__.py
@@ -138,29 +140,32 @@ ResearchMind/
 │   │   │   ├── ResearchPage.vue    # 研究页（核心）：创建态/运行态/完成态三态切换
 │   │   │   ├── HistoryPage.vue     # 研究任务历史列表（分页、按状态筛选）
 │   │   │   └── admin/
-│   │   │       ├── AdminStats.vue      # 系统统计（数据总览 + ECharts 图表）
+│   │   │       ├── StatsPage.vue         # 系统统计（数据总览 + ECharts 图表）
 │   │   │       ├── AdminTaskList.vue   # 全部研究任务（跨用户），可查看/删除/取消
 │   │   │       ├── AdminTaskDetail.vue # 任务详情（Pipeline 阶段 + Steps + Trace）
 │   │   │       ├── AdminUserList.vue   # 用户管理列表（筛选+操作菜单）
 │   │   │       └── AdminUserDetail.vue # 用户详情（统计+快捷操作）
 │   │   │
 │   │   ├── components/
-│   │   │   ├── research/           # 研究页核心组件
-│   │   │   │   ├── ResearchForm.vue     # 创建态：研究主题输入 + 研究类型卡片 + 高级选项
-│   │   │   │   ├── PipelineProgress.vue # 运行态：7 阶段 Pipeline 进度条（Planning→Render）
-│   │   │   │   ├── StepLogStream.vue    # 运行态：Step 实时 SSE 日志流（自动滚动）
-│   │   │   │   ├── ReportViewer.vue     # 完成态：Markdown 报告正文渲染 + [来源N] 引用锚点
-│   │   │   │   ├── ChapterNav.vue       # 完成态：章节导航侧栏（当前章节高亮 + 滚动联动）
-│   │   │   │   ├── EvidenceGraph.vue    # 完成态：证据图谱面板（来源-主张-章节关联）
-│   │   │   │   └── TraceSummary.vue     # 完成态：Pipeline 各阶段耗时摘要
-│   │   │   ├── layout/             # 布局组件
-│   │   │   │   ├── AppLayout.vue   # 布局容器（Sidebar + 主内容）
-│   │   │   │   ├── Sidebar.vue     # 侧边栏（历史任务列表 + 导航）
-│   │   │   │   └── AdminLayout.vue # Admin 布局（独立 Admin 侧边栏 + 内容区）
-│   │   │   └── charts/             # ECharts 图表组件
-│   │   │       ├── TrendChart.vue  # 任务量趋势图（折线图）
-│   │   │       ├── LatencyChart.vue # 任务耗时分布图（柱状图）
-│   │   │       └── TokenChart.vue  # Token 消耗图（堆叠柱状图）
+│   │   │   ├── task/               # 研究页运行态组件
+│   │   │   │   ├── PipelineProgress.vue # 7 阶段 Pipeline 进度条（Planning→Render）
+│   │   │   │   ├── StepLog.vue          # Step 实时 SSE 日志流（暗色终端风格）
+│   │   │   │   ├── RunningHeader.vue    # 运行态顶部状态栏
+│   │   │   │   ├── CheckpointBanner.vue # 断点续跑提示横幅
+│   │   │   │   ├── ExampleCard.vue      # 快捷示例卡片
+│   │   │   │   └── TypeCard.vue         # 研究类型选择卡片
+│   │   │   ├── report/             # 研究页完成态组件
+│   │   │   │   ├── ReportViewer.vue     # 报告查看器（三栏布局容器）
+│   │   │   │   ├── ReportArticle.vue    # Markdown 报告正文渲染 + [来源N] 引用锚点
+│   │   │   │   ├── SectionNav.vue       # 章节导航侧栏（当前章节高亮 + 滚动联动）
+│   │   │   │   ├── EvidencePanel.vue    # 来源图谱面板（来源-主张-章节关联）
+│   │   │   │   ├── TracePanel.vue       # Pipeline 各阶段耗时摘要
+│   │   │   │   ├── FailedView.vue       # 任务失败展示
+│   │   │   │   └── CanceledView.vue     # 任务取消展示
+│   │   │   └── layout/             # 布局组件
+│   │   │       ├── AppLayout.vue   # 布局容器（Sidebar + 主内容）
+│   │   │       ├── Sidebar.vue     # 侧边栏（历史任务列表 + 导航）
+│   │   │       └── AdminLayout.vue # Admin 布局（独立 Admin 侧边栏 + 内容区）
 │   │   │
 │   │   ├── stores/                 # Pinia 状态管理
 │   │   │   ├── auth.js             # 认证状态（user/token/isAdmin/login/logout/refresh）
@@ -170,18 +175,13 @@ ResearchMind/
 │   │   ├── api/                    # HTTP 请求封装
 │   │   │   ├── index.js            # Axios 实例 + 请求/响应拦截器（Token 附加/401 自动刷新）
 │   │   │   ├── auth.js             # register / login / refresh / logout / changePassword
-│   │   │   ├── research.js         # 研究任务 CRUD + SSE 连接管理
-│   │   │   ├── admin.js            # Admin 统计/任务管理/用户管理 API
-│   │   │   └── trace.js            # 链路追踪 API
+│   │   │   └── research.js         # 研究任务 CRUD + SSE 连接管理
 │   │   │
 │   │   ├── router/
 │   │   │   └── index.js            # Vue Router + 路由守卫（认证/Admin 三级）
 │   │   │
 │   │   ├── composables/
 │   │   │   └── useECharts.js       # ECharts 动态加载 composable（响应式 resize + dispose）
-│   │   │
-│   │   ├── constants/
-│   │   │   └── charts.js           # ECharts 图表颜色/样式/tooltip 常量
 │   │   │
 │   │   ├── styles/
 │   │   │   └── global.css          # 全局样式（Design Token --rm-* CSS 变量）
@@ -193,29 +193,29 @@ ResearchMind/
 │   │
 │   └── tests/                      # 前端测试（vitest + @vue/test-utils）
 │       ├── setup.js                # 全局 Mock & 配置
-│       ├── LoginPage.test.js
-│       ├── ResearchPage.test.js
-│       ├── HistoryPage.test.js
-│       ├── ResearchForm.test.js
-│       ├── PipelineProgress.test.js
-│       ├── StepLogStream.test.js
-│       ├── ReportViewer.test.js
-│       ├── EvidenceGraph.test.js
-│       ├── AppLayout.test.js
-│       ├── AdminLayout.test.js
-│       ├── Sidebar.test.js
-│       ├── AdminStats.test.js
-│       ├── AdminTaskList.test.js
-│       ├── AdminTaskDetail.test.js
-│       ├── AdminUserList.test.js
-│       ├── AdminUserDetail.test.js
-│       ├── Charts.test.js
-│       ├── useECharts.test.js
-│       ├── markdown.test.js
-│       ├── sse.test.js
-│       ├── authStore.test.js       # Auth Store 测试（JWT 解析/刷新/并发守卫）
-│       ├── taskStore.test.js       # Task Store 测试（SSE 状态机/任务管理/进度追踪）
-│       └── reportStore.test.js     # Report Store 测试（报告加载/章节导航/Evidence 联动）
+│       ├── components/             # 组件测试（15 个）
+│       │   ├── AppLayout.test.js
+│       │   ├── CanceledView.test.js
+│       │   ├── EvidencePanel.test.js
+│       │   ├── FailedView.test.js
+│       │   ├── HistoryPage.test.js
+│       │   ├── LoginPage.test.js
+│       │   ├── PipelineProgress.test.js
+│       │   ├── ReportArticle.test.js
+│       │   ├── ReportViewer.test.js
+│       │   ├── ResearchPage.test.js
+│       │   ├── SectionNav.test.js
+│       │   ├── StepLog.test.js
+│       │   ├── TracePanel.test.js
+│       │   ├── TypeCard.test.js
+│       │   └── routerGuards.test.js
+│       └── unit/                   # 单元测试（6 个）
+│           ├── authStore.test.js   # Auth Store 测试（JWT 解析/刷新/并发守卫）
+│           ├── reportStore.test.js # Report Store 测试（报告加载/章节导航/Evidence 联动）
+│           ├── sse.test.js         # SSE 解析测试（事件解析/状态机/重连）
+│           ├── taskStore.test.js   # Task Store 测试（任务管理/进度追踪）
+│           ├── taskStore.sse.test.js # Task Store SSE 集成测试
+│           └── tokenRefresh.test.js # Token 自动刷新测试
 │
 ├── tests/                          # 后端测试（pytest + httpx）
 │   ├── __init__.py
@@ -298,7 +298,7 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/2
 LLM_API_KEY=<your-deepseek-api-key>
 LLM_MODEL=deepseek-v4-pro          # MVP 单一模型
 # LLM_PLANNING_MODEL=deepseek-v4-pro # [v2] 分级模型
-# LLM_FLASH_MODEL=deepseek-v4-flash   # [v2] 轻量模型
+LLM_FLASH_MODEL=deepseek-v4-flash     # Rerank 阶段轻量模型
 
 # ── 搜索 ──
 TAVILY_API_KEY=<your-tavily-api-key>
