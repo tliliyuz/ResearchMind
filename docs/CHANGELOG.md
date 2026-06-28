@@ -10,7 +10,20 @@
 
 ## [Unreleased]
 
+### Added
+- **Celery Worker 崩溃自动恢复机制**待实现：解决 Worker 被 SIGKILL/OOM/断电杀死后任务永久卡在 `running` 的死锁问题。包含：
+  - `_run_pipeline()` 三元状态检查（`pending`→正常执行 / `running`→崩溃恢复 / 终态→跳过），修复二元检查导致的跳过执行问题
+  - `_start_task()` 新增 `running` 状态预检与崩溃恢复路径（不重复 CAS、不重复 SSE、获取任务级锁）
+  - 任务级幂等锁（`rm:task_lock:{task_id}`，TTL=900s），防止多 Worker 并发恢复同一任务
+  - `run()` 中 `try/finally` 确保所有退出路径释放任务锁
+  - FastAPI `lifespan()` 启动时过时任务自动检测与 re-queue（阈值 1800s = 2× `task_time_limit`）
+  - `GET /api/health/workers` 运维端点（Celery `control.ping()` 返回活跃 Worker 列表）
+  - 新增 `CeleryWorkerLostException`（E3112，`recoverable=true`）
+  - 新增配置项 `STALE_TASK_RECOVERY_SECONDS`（1800s）、`STARTUP_RECOVERY_ENABLED`（True）
+
 ### Fixed
+- **修复断点续跑后任务状态永久卡在 `running`**：`retry_task()` 只重置 `failed` Step → `pending`，但崩溃残留的 `running` 子 Step 未被处理，导致 `TaskStateResolver._all_steps_terminal()` 返回 False → `resolve()` 返回当前状态 `running` → `_finalize_task` 的 CAS `SET status='running' WHERE status='running'` 无操作，状态无法变更。修复：(1) `retry_task()` 新增三步清理：崩溃残留 `running` → `failed`、非终态子 Step → `skipped`、主 Step `failed` → `pending`；(2) `_create_step()` 全部查询增加 `parent_step_id IS NULL` 过滤，确保只匹配主 Step 而非 search/fetch 内部子 Step。
+- **修复 Celery Worker 崩溃后任务死锁**：`acks_late=True` 正确重投递后，`_run_pipeline()` 二元幂等检查（`if task.status != "pending"`）错误跳过 `running` 状态任务，导致任务永久卡住。修复为三元检查，`running` 状态进入崩溃恢复路径。
 - **修复进度条百分比与步骤数不一致（第 6 步显示 33% 而非 ~86%）**：回退 🟡9 的动态 `total_steps` 扩展逻辑。根因是 `_update_total_steps_on_completion` 将分母改为子步骤总数（如 18），但分子 `completed_steps` 仍按 Phase 维度计数（6），导致 `6/18≈33%`。修复：(1) `research_service.create_task()` 中 `total_steps` 恢复为 `len(PHASE_ORDER)`=7；(2) 移除 `_update_total_steps_on_completion` 方法及其调用；(3) `_start_task` 中增加安全修正——对旧任务自动将 `total_steps` 修正为 7，避免已创建任务残留动态值。
 - **Phase3 批次 B 规范修复（🟡1-🟡31，对应 REVIEW_FIX_PLAN.md §4）**——后端 19 项 + 前端 7 项 + 测试 3 项 + 文档 2 项规范化修复：
   - **后端规范化（🟡1-🟡19）**：
@@ -128,6 +141,15 @@
   - 新增 `scripts/eval_offline.py` 离线评估脚本，支持 `--task-id`、`--all-completed`、`--limit`、`--json`。
   - 新增测试：`tests/unit/evaluation/test_search_eval.py`、`test_fetch_eval.py`、`test_rerank_eval.py`、`test_aggregator.py`、`test_manual.py`；`tests/integration/test_pipeline_evaluation.py` 复用全链路 Mock 验证 Pipeline 完成后评估指标正确。
   - 更新 `docs/ROADMAP.md` §4.9，将 Phase 3「人工报告质量评估（第 1 轮）」与「离线 Pipeline 评估」标为完成，并交叉引用 TESTING_STRATEGY.md。
+
+- **Phase 4 §5.1 Execution Context + 断点续跑（ROADMAP §5.1）**——失败任务从最后 checkpoint 恢复执行：
+  - `app/core/exceptions.py` — 扩展 `TaskStatusConflictException`：`detail` 支持结构化 `current_status` / `allowed_statuses` 字段，Retry API 返回精确冲突信息
+  - `app/schemas/research.py` — 新增 `ResumeFromSchema`（`phase` / `last_completed_step_id` / `next_step_type`）与 `ResearchRetryResponse`
+  - `app/services/research_service.py` — 新增 `retry_task()`：前置校验（`RETRY_ALLOWED_STATUSES = frozenset({"failed", "partially_completed", "canceled"})` + `recoverable=true`）→ 重置所有 failed Step 为 pending → CAS 更新 task status（`WHERE status = old_value`）→ 清空 error 字段 → 从 `execution_context` 构建 `resume_from`；新增常量 `RETRY_ALLOWED_STATUSES`
+  - `app/api/research.py` — 新增 `POST /api/research/{task_id}/retry`（202），遵循 Service→commit→Celery dispatch 模式；`require_task_accessible` 权限校验
+  - `app/services/pipeline_orchestrator.py` — `_create_step()` 新增三层复用：已终态 Step（completed/skipped）直接返回 → 未终态 Step（pending/running）崩溃恢复复用 → 均无匹配时新建。Retry 场景下 failed Step 已被 `retry_task()` 重置为 pending，`_create_step` 自动新建 Step 重新执行
+  - 设计决策（非 Deviation）：不新增 `"retrying"` task 状态（复用 `pending→running` 流程）；不新增 `retry_count` 列（v1.0 step 级已有）；Evidence 只追加不覆盖（`evidence_items` 表无 UNIQUE 约束，天然支持）
+  - 测试覆盖 35 用例：`test_research_service.py` +15（retry_task 正常/状态非法/recoverable=false/CAS 冲突/failed step 重置/resume_from 正确性/RETRY_ALLOWED_STATUSES 常量）/ `test_pipeline_orchestrator.py` +9（_create_step completed/skipped/pending 复用 + failed 不复用 + 无已存在 step 新建 + **ExecutionContext 原子更新 4 用例**：_complete_step 原子写入/连续 phase 递进/崩溃恢复 resume_from 构造/失败时 execution_context 不部分更新）/ `test_research_api.py` +11（POST /retry 202×3/E2001/E2002/admin 可 retry 他人/E2003×4/failed step 重置验证）
 
 > Phase 1 骨架搭建完成（后端 §2.1-2.4 + 前端 §2.5 ✅，测试 §2.7 待执行）。
 > Phase 2.3.1 研究任务 CRUD + 状态机完成（ROADMAP §3.1 ✅）。

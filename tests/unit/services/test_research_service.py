@@ -37,6 +37,8 @@ from app.services.research_service import (
     get_task_list,
     get_task_detail,
     delete_task,
+    retry_task,
+    RETRY_ALLOWED_STATUSES,
 )
 
 
@@ -629,3 +631,262 @@ class TestGetReport:
             await get_report(db_session, task)
 
         assert exc_info.value.error_code == "E2003"
+
+
+# ═══════════════════════════════════════════════════════════════
+# retry_task()
+# ═══════════════════════════════════════════════════════════════
+
+
+async def _seed_retry_task(
+    db: AsyncSession,
+    *,
+    status: str = "failed",
+    recoverable: bool | None = True,
+    execution_context: dict | None = None,
+    with_failed_step: bool = False,
+    with_completed_step: bool = False,
+) -> ResearchTask:
+    """工厂函数：预置一个可 retry 的任务（含基础 step）。
+
+    - status: 任务状态（failed / partially_completed / canceled）
+    - recoverable: 是否可恢复
+    - execution_context: 断点续跑上下文（含 last_completed_step_id / execution_pointer）
+    - with_failed_step: 是否附带一条 failed step（用于验证重置逻辑）
+    - with_completed_step: 是否附带一条 completed step（用于验证复用不重置）
+    """
+    task = ResearchTask(
+        user_id=1,
+        topic="断点续跑测试主题",
+        requirements={"task_type": "analysis", "depth": "quick", "max_sources": 10, "language": "zh"},
+        status=status,
+        recoverable=recoverable,
+        execution_context=execution_context,
+        total_steps=7,
+        completed_steps=3 if status == "partially_completed" else 0,
+        error_code="E3104" if status == "failed" else None,
+        error_message="LLM 综合失败" if status == "failed" else None,
+    )
+    db.add(task)
+    await db.flush()
+
+    # 基础 planning step（completed，模拟已完成的第一个阶段）
+    db.add(ResearchStep(
+        task_id=task.id,
+        step_type="planning",
+        status="completed",
+        label="Planning：拆解研究主题",
+    ))
+
+    # 可选 failed step
+    if with_failed_step:
+        db.add(ResearchStep(
+            task_id=task.id,
+            step_type="synthesis",
+            status="failed",
+            error_code="E3104",
+            error_message="LLM 综合失败",
+            label="Synthesis：跨源综合",
+        ))
+
+    # 可选 completed step
+    if with_completed_step:
+        db.add(ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="completed",
+            label="Search：多源搜索",
+        ))
+
+    await db.flush()
+    return task
+
+
+class TestRetryTask:
+    """断点续跑"""
+
+    # ── 成功路径 ──────────────────────────────────────────────
+
+    async def test_failed任务_recoverable为true_重置为pending并返回resume_from(self, db_session: AsyncSession):
+        ec = {
+            "last_completed_step_id": "step-search-001",
+            "execution_pointer": {"phase": "synthesizing"},
+        }
+        task = await _seed_retry_task(db_session, status="failed", execution_context=ec, with_failed_step=True)
+
+        result = await retry_task(db_session, task)
+
+        assert result.task_id == task.id
+        assert result.status == "pending"
+        assert task.status == "pending"
+        assert result.resume_from.phase == "synthesizing"
+        assert result.resume_from.last_completed_step_id == "step-search-001"
+        assert result.resume_from.next_step_type == "evidence_graph"
+
+    async def test_partially_completed任务_可retry(self, db_session: AsyncSession):
+        ec = {
+            "execution_pointer": {"phase": "fetching"},
+        }
+        task = await _seed_retry_task(db_session, status="partially_completed", execution_context=ec)
+
+        result = await retry_task(db_session, task)
+
+        assert result.task_id == task.id
+        assert result.status == "pending"
+        assert result.resume_from.phase == "fetching"
+        assert result.resume_from.next_step_type == "rerank"
+
+    async def test_canceled任务_recoverable为true_可retry(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="canceled")
+
+        result = await retry_task(db_session, task)
+
+        assert result.task_id == task.id
+        assert result.status == "pending"
+
+    async def test_retry后task_状态为pending_清空错误字段(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="failed", with_failed_step=True)
+
+        await retry_task(db_session, task)
+
+        # 验证 task 的错误字段被清空
+        assert task.status == "pending"
+        assert task.error_code is None
+        assert task.error_message is None
+        assert task.recoverable is None
+        assert task.completed_at is None
+        assert task.current_phase is None
+
+    # ── failed step 重置 ─────────────────────────────────────
+
+    async def test_failed_step_被重置为pending(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="failed", with_failed_step=True)
+
+        await retry_task(db_session, task)
+
+        # 查询 synthesis step 应被重置
+        from sqlalchemy import select as sa_sel
+        result = await db_session.execute(
+            sa_sel(ResearchStep).where(
+                ResearchStep.task_id == task.id,
+                ResearchStep.step_type == "synthesis",
+            )
+        )
+        failed_steps = result.scalars().all()
+        assert len(failed_steps) == 1
+        assert failed_steps[0].status == "pending"
+        assert failed_steps[0].error_code is None
+        assert failed_steps[0].error_message is None
+
+    async def test_completed_step_不被重置(self, db_session: AsyncSession):
+        task = await _seed_retry_task(
+            db_session, status="failed", with_failed_step=True, with_completed_step=True
+        )
+
+        await retry_task(db_session, task)
+
+        # 查询 search step 应保持 completed
+        from sqlalchemy import select as sa_sel
+        result = await db_session.execute(
+            sa_sel(ResearchStep).where(
+                ResearchStep.task_id == task.id,
+                ResearchStep.step_type == "search",
+            )
+        )
+        search_steps = result.scalars().all()
+        assert len(search_steps) == 1
+        assert search_steps[0].status == "completed"
+
+    async def test_无failed_step_重置为no_op(self, db_session: AsyncSession):
+        """没有 failed step 时 reset 不报错，仅日志记录。"""
+        task = await _seed_retry_task(db_session, status="failed")
+
+        # 不应抛异常
+        result = await retry_task(db_session, task)
+        assert result.status == "pending"
+
+    # ── 错误分支：状态非法 ──────────────────────────────────
+
+    async def test_running任务_抛出E2003(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="running")
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await retry_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
+        detail = exc_info.value.error_detail
+        assert detail["current_status"] == "running"
+        assert set(detail["allowed_statuses"]) == set(RETRY_ALLOWED_STATUSES)
+
+    async def test_completed任务_抛出E2003(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="completed")
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await retry_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
+        assert exc_info.value.error_detail["current_status"] == "completed"
+
+    async def test_pending任务_抛出E2003(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="pending")
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await retry_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
+
+    # ── 错误分支：recoverable=false ──────────────────────────
+
+    async def test_recoverable为false_抛出E2003(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="failed", recoverable=False)
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await retry_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
+
+    # ── 错误分支：CAS 冲突 ───────────────────────────────────
+
+    async def test_CAS冲突_状态已变更_抛出E2003(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="failed")
+
+        # 模拟并发：在 retry_task 执行前将 DB 状态改为 completed
+        from sqlalchemy import update as sa_update
+        await db_session.execute(
+            sa_update(ResearchTask)
+            .where(ResearchTask.id == task.id)
+            .values(status="completed")
+        )
+        await db_session.flush()
+
+        with pytest.raises(TaskStatusConflictException) as exc_info:
+            await retry_task(db_session, task)
+
+        assert exc_info.value.error_code == "E2003"
+
+    # ── resume_from 正确性 ───────────────────────────────────
+
+    async def test_resume_from_next_step_type_为最后一个phase时_返回None(self, db_session: AsyncSession):
+        """如果 last_phase 是 render（最后一个），next_step_type 应为 None。"""
+        ec = {
+            "execution_pointer": {"phase": "rendering"},
+        }
+        task = await _seed_retry_task(db_session, status="failed", execution_context=ec)
+
+        result = await retry_task(db_session, task)
+
+        assert result.resume_from.phase == "rendering"
+        assert result.resume_from.next_step_type is None
+
+    async def test_resume_from_execution_context为空时_phase返回None(self, db_session: AsyncSession):
+        task = await _seed_retry_task(db_session, status="failed", execution_context=None)
+
+        result = await retry_task(db_session, task)
+
+        assert result.resume_from.phase is None
+        assert result.resume_from.last_completed_step_id is None
+        assert result.resume_from.next_step_type is None
+
+    async def test_RETRY_ALLOWED_STATUSES_仅含三种状态(self):
+        """验证 retry 仅允许 failed / partially_completed / canceled。"""
+        assert RETRY_ALLOWED_STATUSES == frozenset({"failed", "partially_completed", "canceled"})

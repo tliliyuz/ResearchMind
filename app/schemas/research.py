@@ -140,6 +140,25 @@ class ResearchCancelResponse(BaseModel):
     status: str = Field(..., description="取消后的状态，固定为 canceled")
 
 
+# ── Retry 相关 Schema（对齐 API.md §3.2）─────────────────────────
+
+
+class ResumeFromSchema(BaseModel):
+    """断点续跑恢复信息 — 从 execution_context 提取。"""
+
+    phase: str | None = Field(None, description="恢复的 Pipeline 阶段（如 fetching）")
+    last_completed_step_id: str | None = Field(None, description="最后完成的 Step UUID")
+    next_step_type: str | None = Field(None, description="下一个待执行的 step_type（如 rerank）")
+
+
+class ResearchRetryResponse(BaseModel):
+    """POST /api/research/{task_id}/retry 响应 — 对齐 API.md §3.2。"""
+
+    task_id: str = Field(..., description="任务 UUID")
+    status: str = Field(..., description="断点续跑启动后的状态")
+    resume_from: ResumeFromSchema = Field(default_factory=ResumeFromSchema, description="恢复信息")
+
+
 # ── 报告相关 Schema（对齐 API.md §3.3）───────────────────────────
 
 

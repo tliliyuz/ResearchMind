@@ -147,11 +147,21 @@ class TaskAccessDeniedException(AppException):
 
 
 class TaskStatusConflictException(AppException):
-    def __init__(self, detail: str = ""):
-        super().__init__(
-            "E2003", "当前任务状态不支持该操作", 409,
-            {"error_type": "TaskStatusConflict", "error_description": detail or "当前任务状态不支持该操作"},
-        )
+    def __init__(
+        self,
+        detail: str = "",
+        current_status: str | None = None,
+        allowed_statuses: list[str] | None = None,
+    ):
+        detail_dict: dict = {
+            "error_type": "TaskStatusConflict",
+            "error_description": detail or "当前任务状态不支持该操作",
+        }
+        if current_status:
+            detail_dict["current_status"] = current_status
+        if allowed_statuses:
+            detail_dict["allowed_statuses"] = allowed_statuses
+        super().__init__("E2003", "当前任务状态不支持该操作", 409, detail_dict)
 
 
 class TaskCanceledException(AppException):

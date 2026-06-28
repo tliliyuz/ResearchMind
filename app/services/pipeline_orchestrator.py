@@ -359,22 +359,45 @@ class PipelineOrchestrator:
     # ── Step 生命周期 ───────────────────────────────────────
 
     async def _create_step(self, step_type: str) -> ResearchStep:
-        """创建或复用 ResearchStep（pending 状态）。
+        """创建或复用 ResearchStep（仅匹配主 Step，parent_step_id IS NULL）。
 
-        优先复用同一任务同一 phase 下尚未进入终态（pending / running）的已有 Step。
-        这能覆盖两种场景：
-        1. research_service 创建任务时已写入首个 planning step，Orchestrator 不应重复创建；
-        2. Worker 断点续跑 / 异常重启后，遗留的 pending / running Step 应继续执行而非新建。
+        复用优先级（三层）：
+        1. 断点续跑：复用已成功完成的 Step（completed / skipped），
+           交由 _run_phase() 的终端检查跳过执行；
+        2. 崩溃恢复：复用 pending / running 的遗留 Step，继续执行；
+        3. 全新创建：以上均不命中则新建 Step（pending 状态）。
+
+        所有查询均过滤 parent_step_id IS NULL，确保不会误匹配
+        search/fetch 阶段内部创建的子 Step。
         """
-        now = datetime.now(timezone.utc)
+        # 1. 断点续跑：复用已完成 Step（仅主 Step）
+        result = await self._session.execute(
+            sa_select(ResearchStep)
+            .where(
+                ResearchStep.task_id == self._task.id,
+                ResearchStep.step_type == step_type,
+                ResearchStep.status.in_(["completed", "skipped"]),
+                ResearchStep.parent_step_id == None,
+            )
+            .order_by(ResearchStep.completed_at.desc())
+            .limit(1)
+        )
+        existing_terminal = result.scalar_one_or_none()
+        if existing_terminal is not None:
+            logger.debug(
+                "Step 复用（已完成）: step_id=%s, type=%s, status=%s",
+                existing_terminal.id, step_type, existing_terminal.status,
+            )
+            return existing_terminal
 
-        # 复用已有非终态 Step（按 started_at 升序，pending 的 NULL 在最前）
+        # 2. 崩溃恢复：复用已有非终态 Step（仅主 Step，按 started_at 升序，pending 的 NULL 在最前）
         result = await self._session.execute(
             sa_select(ResearchStep)
             .where(
                 ResearchStep.task_id == self._task.id,
                 ResearchStep.step_type == step_type,
                 ResearchStep.status.in_(["pending", "running"]),
+                ResearchStep.parent_step_id == None,
             )
             .order_by(ResearchStep.started_at)
             .limit(1)
@@ -382,11 +405,12 @@ class PipelineOrchestrator:
         existing_step = result.scalar_one_or_none()
         if existing_step is not None:
             logger.debug(
-                "Step 复用: step_id=%s, type=%s, status=%s",
+                "Step 复用（待执行）: step_id=%s, type=%s, status=%s",
                 existing_step.id, step_type, existing_step.status,
             )
             return existing_step
 
+        # 3. 全新创建（主 Step，parent_step_id 通过 _last_step_id 维护链式关系）
         step = ResearchStep(
             task_id=self._task.id,
             step_type=step_type,

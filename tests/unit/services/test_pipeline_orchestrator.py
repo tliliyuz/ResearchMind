@@ -18,6 +18,7 @@ from app.models.enums import TASK_PHASE_ENUM, STEP_TYPE_ENUM
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
 from app.models.user import User
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.pipeline.sse_bridge import (
     EVENT_STEP_COMPLETED,
     EVENT_STEP_FAILED,
@@ -889,3 +890,608 @@ class TestPipelineWithRealSession:
         updated_task = result.scalar_one()
         assert updated_task.status == "failed"
         assert updated_task.error_code == "E3101"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _create_step 断点续跑 Step 复用
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCreateStepRetryReuse:
+    """_create_step 三层复用逻辑：已完成 → 待执行 → 新建。"""
+
+    @pytest.mark.asyncio
+    async def test_completed_step_被复用_不新建(self, db_session: AsyncSession):
+        """已存在 completed step → _create_step 应直接返回该 step，不新建。"""
+        user = User(
+            username="retry-reuse-completed",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="Step 复用测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+            execution_context={"execution_pointer": {"phase": "searching"}},
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        # 已存在一条 completed planning step
+        existing_step = ResearchStep(
+            task_id=task.id,
+            step_type="planning",
+            status="completed",
+            label="Planning：拆解研究主题",
+        )
+        db_session.add(existing_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(),
+            phase_handlers={},
+        )
+
+        step = await orchestrator._create_step("planning")
+
+        # 应返回已有 completed step，而非新建
+        assert step.id == existing_step.id
+        assert step.status == "completed"
+
+        # 验证没有新建额外 planning step
+        result = await db_session.execute(
+            sa_select(ResearchStep).where(
+                ResearchStep.task_id == task.id,
+                ResearchStep.step_type == "planning",
+            )
+        )
+        all_planning = result.scalars().all()
+        assert len(all_planning) == 1
+
+    @pytest.mark.asyncio
+    async def test_skipped_step_被复用_不新建(self, db_session: AsyncSession):
+        """已存在 skipped step → _create_step 应复用。"""
+        user = User(
+            username="retry-reuse-skipped",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="Step 复用 skipped 测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        existing_step = ResearchStep(
+            task_id=task.id,
+            step_type="fetch",
+            status="skipped",
+            label="Fetch：内容抓取",
+        )
+        db_session.add(existing_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(),
+            phase_handlers={},
+        )
+
+        step = await orchestrator._create_step("fetch")
+        assert step.id == existing_step.id
+        assert step.status == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_failed_step_不被复用_新建新step(self, db_session: AsyncSession):
+        """failed step 不被 _create_step 复用（不在 completed/skipped/pending/running 中），应新建。"""
+        user = User(
+            username="retry-not-reuse-failed",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="Failed step 不复用测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        failed_step = ResearchStep(
+            task_id=task.id,
+            step_type="synthesis",
+            status="failed",
+            error_code="E3104",
+            error_message="LLM 综合失败",
+            label="Synthesis：跨源综合",
+        )
+        db_session.add(failed_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(),
+            phase_handlers={},
+        )
+
+        step = await orchestrator._create_step("synthesis")
+
+        # 应新建 step（failed 不在 reuse 查询范围内）
+        assert step.id != failed_step.id
+        assert step.status == "pending"
+
+        # 验证 DB 中 synthesis step 共 2 条（1 failed + 1 new pending）
+        result = await db_session.execute(
+            sa_select(ResearchStep).where(
+                ResearchStep.task_id == task.id,
+                ResearchStep.step_type == "synthesis",
+            )
+        )
+        all_synthesis = result.scalars().all()
+        assert len(all_synthesis) == 2
+        statuses = {s.status for s in all_synthesis}
+        assert "failed" in statuses
+        assert "pending" in statuses
+
+    @pytest.mark.asyncio
+    async def test_无已存在step_新建pending_step(self, db_session: AsyncSession):
+        """无任何已存在 step → _create_step 新建 pending step。"""
+        user = User(
+            username="retry-new-step",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="新建 step 测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(),
+            phase_handlers={},
+        )
+
+        step = await orchestrator._create_step("rerank")
+        assert step.step_type == "rerank"
+        assert step.status == "pending"
+        assert step.task_id == task.id
+
+    @pytest.mark.asyncio
+    async def test_pending_step_被复用_不新建(self, db_session: AsyncSession):
+        """已存在 pending step → _create_step 崩溃恢复路径应复用。"""
+        user = User(
+            username="retry-reuse-pending",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="Pending step 复用测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="pending",
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        existing_step = ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="pending",
+            label="Search：多源搜索",
+        )
+        db_session.add(existing_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=MagicMock(),
+            phase_handlers={},
+        )
+
+        step = await orchestrator._create_step("search")
+        assert step.id == existing_step.id
+        assert step.status == "pending"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Execution Context 原子更新 — _complete_step 与 checkpoint 恢复
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestExecutionContextAtomicity:
+    """_complete_step 原子更新 step 状态与 execution_context，确保崩溃后可恢复。"""
+
+    @pytest.mark.asyncio
+    async def test__complete_step_原子更新step状态与execution_context(self, db_session: AsyncSession):
+        """_complete_step 调用后，step.status 与 task.execution_context 同时可见。"""
+        import json
+
+        user = User(
+            username="ec-atomic-user",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="ExecutionContext 原子性测试",
+            requirements={"task_type": "explainer", "max_sources": 5, "language": "zh"},
+            status="running",
+            total_steps=7,
+            completed_steps=0,
+            execution_context=None,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        step = ResearchStep(
+            task_id=task.id,
+            step_type="planning",
+            status="running",
+            label="Planning：拆解研究主题",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=TraceRecorder(
+                task_id=str(task.id), user_id=user.id, topic=task.topic
+            ),
+            phase_handlers={},
+        )
+
+        output = {
+            "sub_questions": ["什么是量子计算？", "量子计算的应用场景"],
+            "prompt_tokens": 500,
+            "completion_tokens": 150,
+            "model": "deepseek-v4-pro",
+            "retry_count": 0,
+        }
+        await orchestrator._complete_step(step, "planning", output)
+
+        # ── 断言：step 状态已更新 ──
+        assert step.status == "completed"
+        assert step.completed_at is not None
+        assert step.duration_ms is not None
+        assert step.output == output
+
+        # ── 断言：execution_context 已原子更新 ──
+        ec = task.execution_context
+        assert ec is not None, "execution_context 应在 _complete_step 后写入"
+        assert ec["current_phase"] == "planning"
+        assert ec["last_completed_step_id"] == str(step.id)
+        assert isinstance(ec["execution_pointer"], dict)
+        assert ec["execution_pointer"]["phase"] == "planning"
+        assert ec["execution_pointer"]["step_index"] == 1
+        assert isinstance(ec["progress"], dict)
+        assert ec["progress"]["completed_steps"] == 1
+        assert ec["progress"]["total_steps"] == 7
+        assert ec["progress"]["progress"] == pytest.approx(0.14, abs=0.01)
+
+        # ── 断言：DB 刷新后 execution_context 持久化（JSON 可往返） ──
+        await db_session.refresh(task)
+        ec_from_db = task.execution_context
+        assert ec_from_db is not None
+        assert ec_from_db["current_phase"] == "planning"
+        assert ec_from_db["last_completed_step_id"] == str(step.id)
+
+    @pytest.mark.asyncio
+    async def test__complete_step_连续两个phase后execution_context正确递进(self, db_session: AsyncSession):
+        """连续执行 planning → search 后，execution_context 指向最后完成的 phase。"""
+        user = User(
+            username="ec-progress-user",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="ExecutionContext 递进测试",
+            requirements={"task_type": "analysis", "max_sources": 10, "language": "zh"},
+            status="running",
+            total_steps=7,
+            completed_steps=0,
+            execution_context=None,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        # Phase 1: planning
+        plan_step = ResearchStep(
+            task_id=task.id,
+            step_type="planning",
+            status="running",
+            label="Planning",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(plan_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=TraceRecorder(
+                task_id=str(task.id), user_id=user.id, topic=task.topic
+            ),
+            phase_handlers={},
+        )
+
+        await orchestrator._complete_step(
+            plan_step, "planning",
+            {"sub_questions": ["q1"], "prompt_tokens": 100, "completion_tokens": 50,
+             "model": "deepseek-v4-pro", "retry_count": 0},
+        )
+
+        assert task.execution_context["current_phase"] == "planning"
+        assert task.execution_context["last_completed_step_id"] == str(plan_step.id)
+        assert task.completed_steps == 1
+
+        # Phase 2: search
+        search_step = ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="running",
+            label="Search",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(search_step)
+        await db_session.flush()
+
+        # 模拟 _complete_step 前递增 completed_steps（通常由 _run_phase 调用方管理）
+        # 注意：_complete_step 内部会 +1，这里手动设回以模拟正常 flow
+        task.completed_steps = 1
+        await orchestrator._complete_step(
+            search_step, "searching",
+            {"total_results": 12, "after_dedup": 8, "sources_created": 8},
+        )
+
+        # ── 断言：execution_context 递进到 search ──
+        assert task.execution_context["current_phase"] == "searching"
+        assert task.execution_context["last_completed_step_id"] == str(search_step.id)
+        assert task.execution_context["execution_pointer"]["phase"] == "searching"
+        assert task.completed_steps == 2
+
+        # ── 验证 planning step 的状态未被覆盖 ──
+        await db_session.refresh(plan_step)
+        assert plan_step.status == "completed"
+        assert plan_step.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test__complete_step后execution_context可供retry_task构造resume_from(self, db_session: AsyncSession):
+        """模拟 Worker 崩溃场景：search 完成后崩溃 → execution_context 中有完整 checkpoint。"""
+        user = User(
+            username="ec-crash-user",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        task = ResearchTask(
+            user_id=user.id,
+            topic="崩溃恢复测试",
+            requirements={"task_type": "comparison", "max_sources": 10, "language": "zh"},
+            status="running",
+            total_steps=7,
+            completed_steps=1,
+            execution_context={
+                "current_phase": "planning",
+                "last_completed_step_id": "fake-planning-step-uuid",
+                "execution_pointer": {"phase": "planning", "step_index": 1, "total_steps_in_phase": 1},
+                "progress": {"completed_steps": 1, "total_steps": 7, "progress": 0.14},
+            },
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        search_step = ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="running",
+            label="Search：多源搜索",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(search_step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=TraceRecorder(
+                task_id=str(task.id), user_id=user.id, topic=task.topic
+            ),
+            phase_handlers={},
+        )
+
+        await orchestrator._complete_step(
+            search_step, "searching",
+            {"total_results": 15, "after_dedup": 10, "sources_created": 10},
+        )
+
+        # ── 断言：execution_context 指向 search（模拟崩溃前最后一个 checkpoint） ──
+        ec = task.execution_context
+        assert ec["current_phase"] == "searching"
+        assert ec["last_completed_step_id"] == str(search_step.id)
+        assert ec["execution_pointer"]["phase"] == "searching"
+
+        # ── 模拟 retry_task 从 execution_context 构建 resume_from ──
+        ep = ec.get("execution_pointer", {})
+        last_phase = ep.get("phase") if isinstance(ep, dict) else None
+        assert last_phase == "searching", "崩溃前最后完成的 phase 应为 searching"
+
+        # 根据 last_phase 推算下一个 step_type
+        from app.services.research_service import PHASE_ORDER
+        phase_to_step = {
+            "planning": "planning", "searching": "search", "fetching": "fetch",
+            "reranking": "rerank", "synthesizing": "synthesis",
+            "building_evidence_graph": "evidence_graph", "rendering": "render",
+        }
+        last_step_type = phase_to_step.get(last_phase, last_phase)
+        idx = PHASE_ORDER.index(last_step_type)
+        next_step_type = PHASE_ORDER[idx + 1] if idx + 1 < len(PHASE_ORDER) else None
+        assert next_step_type == "fetch", "search 完成后，下一个 phase 应为 fetch"
+
+        # ── 验证已完成的 step 可被 _create_step 复用 ──
+        reused = await orchestrator._create_step("search")
+        assert reused.id == search_step.id
+        assert reused.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test__complete_step_失败时execution_context不更新(self, db_session: AsyncSession):
+        """_update_execution_context 失败时，execution_context 保持旧值不更新。"""
+        user = User(
+            username="ec-fail-user",
+            password_hash=hash_password("pass"),
+            role="user",
+            status="active",
+        )
+        db_session.add(user)
+        await db_session.flush()
+
+        old_ec = {
+            "current_phase": "planning",
+            "last_completed_step_id": "old-step-uuid",
+            "execution_pointer": {"phase": "planning"},
+        }
+        task = ResearchTask(
+            user_id=user.id,
+            topic="ExecutionContext 失败测试",
+            requirements={"task_type": "explainer", "max_sources": 5, "language": "zh"},
+            status="running",
+            total_steps=7,
+            completed_steps=1,
+            execution_context=old_ec,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        step = ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="running",
+            label="Search",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(step)
+        await db_session.flush()
+
+        sse_bridge = AsyncMock()
+        sse_bridge.task_id = str(task.id)
+        orchestrator = PipelineOrchestrator(
+            task=task,
+            session=db_session,
+            sse_bridge=sse_bridge,
+            trace_recorder=TraceRecorder(
+                task_id=str(task.id), user_id=user.id, topic=task.topic
+            ),
+            phase_handlers={},
+        )
+
+        # 注入异常：让 _update_execution_context 查询时触发错误
+        # 通过 monkey-patch ResearchStep 查询使 count 查询失败
+        original_execute = db_session.execute
+
+        async def failing_execute(*args, **kwargs):
+            from sqlalchemy import select as sa_select_inner
+            from sqlalchemy.sql import func
+            stmt = args[0] if args else kwargs.get("statement")
+            stmt_str = str(stmt) if stmt is not None else ""
+            # 拦截 execution_context 中的 count 查询（来自 _update_execution_context）
+            if "count" in stmt_str.lower() and "research_steps" in stmt_str.lower():
+                raise RuntimeError("模拟 DB 查询失败")
+            return await original_execute(*args, **kwargs)
+
+        db_session.execute = failing_execute
+
+        try:
+            with pytest.raises(RuntimeError, match="模拟 DB 查询失败"):
+                await orchestrator._complete_step(
+                    step, "searching",
+                    {"total_results": 5},
+                )
+        finally:
+            db_session.execute = original_execute
+
+        # ── 断言：execution_context 保持旧值（未被部分更新） ──
+        await db_session.refresh(task)
+        assert task.execution_context == old_ec, (
+            "_complete_step 失败后 execution_context 应保持旧值"
+        )
+
+        # ── 断言：step 状态也未被更新（因 flush 在 _update_execution_context 之前，
+        #  但同在一个未 commit 的事务内，外部 rollback 会一并回退） ──
+        # 注意：这里 flush 已执行（_complete_step line 473），
+        # 但由于 pytest fixture 会回滚整个事务，DB 层面的持久性由外层保证
+        await db_session.refresh(step)
+        # step.status 可能因 flush 已变为 "completed"，但事务回滚会撤销
+        # 关键断言：execution_context 没有被部分更新

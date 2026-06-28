@@ -1,10 +1,12 @@
-"""研究任务接口 — 创建 / 列表 / 详情 / 删除 / SSE 事件流
+"""研究任务接口 — 创建 / 列表 / 详情 / 删除 / 取消 / 断点续跑 / SSE 事件流
 
 对齐 API.md §3：
 - POST /api/research — 创建研究任务 + Celery 分发
 - GET /api/research — 任务历史列表（分页 + 状态筛选）
 - GET /api/research/{task_id} — 任务状态与进度快照
 - DELETE /api/research/{task_id} — FK CASCADE 级联删除
+- POST /api/research/{task_id}/cancel — 取消任务
+- POST /api/research/{task_id}/retry — 断点续跑
 - GET /api/research/{task_id}/stream — SSE 事件流（实时进度推送）
 - GET /api/research/{task_id}/state — REST 状态快照（轮询降级）
 """
@@ -36,6 +38,7 @@ from app.services.research_service import (
     get_report,
     get_task_detail,
     get_task_list,
+    retry_task,
 )
 from app.tasks.research_task import execute_research_task as _execute_research_task
 
@@ -140,6 +143,30 @@ async def cancel_research_task(
         logger.exception("取消任务后发送 SSE 事件失败: task_id=%s", task.id)
 
     return {"code": "0", "message": "任务已取消", "data": result.model_dump()}
+
+
+@router.post("/{task_id}/retry", status_code=202)
+async def retry_research_task(
+    task: ResearchTask = Depends(require_task_accessible),
+    db: AsyncSession = Depends(get_db),
+):
+    """断点续跑（需登录，仅 owner 或 admin）。
+
+    对齐 API.md §3.2 POST /api/research/{task_id}/retry。
+    从最后 checkpoint 恢复执行，已完成 Step 复用，Evidence 只追加不覆盖。
+
+    流程：Service 层校验 + CAS 更新 + 重置 failed Step → commit → Celery 分发。
+    返回 202 表示已接受并分发。
+    """
+    result = await retry_task(db, task)
+    await db.commit()
+    _execute_research_task.delay(str(result.task_id))
+    # 返回 status="running"（已分发，worker 将立即拾取并转为 running）
+    return {
+        "code": "0",
+        "message": "断点续跑已启动",
+        "data": {**result.model_dump(), "status": "running"},
+    }
 
 
 # 任务终态集合：终态任务 SSE 只推送 snapshot 后关闭连接

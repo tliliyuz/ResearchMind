@@ -673,3 +673,163 @@ class TestGetResearchReportAPI:
         response = await async_client.get(f"/api/research/{task.id}/report", headers=auth_headers)
         assert response.status_code == 409
         assert response.json()["code"] == "E2003"
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/research/{task_id}/retry — 断点续跑
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestRetryResearchAPI:
+    """POST /api/research/{task_id}/retry"""
+
+    async def _seed_retry_task(
+        self,
+        db_session: AsyncSession,
+        *,
+        status: str = "failed",
+        recoverable: bool = True,
+        user_id: int = 1,
+        task_id: str,
+    ) -> ResearchTask:
+        """工厂：预置一条可 retry 的任务。"""
+        task = ResearchTask(
+            id=task_id,
+            user_id=user_id,
+            topic="断点续跑 API 测试",
+            requirements={"task_type": "analysis", "depth": "quick", "max_sources": 10, "language": "zh"},
+            status=status,
+            recoverable=recoverable,
+            error_code="E3104" if status == "failed" else None,
+            error_message="LLM 综合失败" if status == "failed" else None,
+            execution_context={
+                "last_completed_step_id": "step-planning-001",
+                "execution_pointer": {"phase": "searching"},
+            },
+            total_steps=7,
+            completed_steps=1,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        # 附带一条 failed planning step
+        db_session.add(ResearchStep(
+            task_id=task.id,
+            step_type="planning",
+            status="completed",
+            label="Planning：拆解研究主题",
+        ))
+        db_session.add(ResearchStep(
+            task_id=task.id,
+            step_type="search",
+            status="failed",
+            error_code="E3102",
+            error_message="搜索失败",
+            label="Search：多源搜索",
+        ))
+        await db_session.flush()
+        return task
+
+    # ── 成功路径 ──────────────────────────────────────────────
+
+    async def test_failed任务_retry返回202(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="failed", task_id="task-retry-failed")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["message"] == "断点续跑已启动"
+        assert data["data"]["task_id"] == task.id
+        assert data["data"]["status"] == "running"
+        assert data["data"]["resume_from"]["phase"] == "searching"
+        assert data["data"]["resume_from"]["last_completed_step_id"] == "step-planning-001"
+
+    async def test_partially_completed任务_retry返回202(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="partially_completed", task_id="task-retry-partial")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["data"]["status"] == "running"
+
+    async def test_canceled任务_retry返回202(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="canceled", task_id="task-retry-canceled")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["data"]["status"] == "running"
+
+    async def test_retry后_failed_step被重置为pending(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="failed", task_id="task-retry-reset")
+
+        await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+
+        # 验证 search step 被重置
+        result = await db_session.execute(
+            select(ResearchStep).where(
+                ResearchStep.task_id == task.id,
+                ResearchStep.step_type == "search",
+            )
+        )
+        search_steps = result.scalars().all()
+        assert len(search_steps) == 1
+        assert search_steps[0].status == "pending"
+        assert search_steps[0].error_code is None
+
+    # ── 错误分支 ──────────────────────────────────────────────
+
+    async def test_任务不存在_返回404_E2001(self, async_client: AsyncClient, auth_headers: dict):
+        response = await async_client.post(
+            "/api/research/00000000-0000-0000-0000-000000000000/retry",
+            headers=auth_headers,
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "E2001"
+
+    async def test_无权访问他人任务_返回403_E2002(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="failed", user_id=999, task_id="task-retry-other")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 403
+        assert response.json()["code"] == "E2002"
+
+    async def test_admin可retry他人任务(self, async_client: AsyncClient, admin_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="failed", user_id=999, task_id="task-retry-admin")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=admin_headers)
+        assert response.status_code == 202
+        assert response.json()["data"]["status"] == "running"
+
+    async def test_running任务_返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="running", task_id="task-retry-running")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 409
+        body = response.json()
+        assert body["code"] == "E2003"
+        assert body["detail"]["current_status"] == "running"
+
+    async def test_completed任务_返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="completed", task_id="task-retry-completed")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 409
+        assert response.json()["code"] == "E2003"
+
+    async def test_pending任务_返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="pending", task_id="task-retry-pending")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 409
+        assert response.json()["code"] == "E2003"
+
+    async def test_recoverable为false_返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
+        task = await self._seed_retry_task(db_session, status="failed", recoverable=False, task_id="task-retry-norec")
+
+        response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
+        assert response.status_code == 409
+        assert response.json()["code"] == "E2003"

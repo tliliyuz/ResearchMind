@@ -40,9 +40,11 @@ from app.schemas.research import (
     ResearchCreateRequest,
     ResearchCreateResponse,
     ResearchReportResponse,
+    ResearchRetryResponse,
     ResearchTaskListItem,
     ResearchTaskListResponse,
     ResearchTaskResponse,
+    ResumeFromSchema,
     VALID_DEPTHS,
     VALID_TASK_TYPES,
 )
@@ -436,6 +438,172 @@ async def cancel_task(
 
     logger.info("研究任务已取消: task_id=%s", task.id)
     return ResearchCancelResponse(task_id=task.id, status="canceled")
+
+
+# ── 断点续跑（Retry）──────────────────────────────────────────────
+
+
+# retry 允许的源状态：只有这些状态的任务才可断点续跑
+RETRY_ALLOWED_STATUSES: frozenset[str] = frozenset({
+    "failed", "partially_completed", "canceled",
+})
+
+# step_type → phase 名称映射（与 pipeline_orchestrator.STEP_TYPE_TO_PHASE 互逆）
+_STEP_TYPE_TO_PHASE: dict[str, str] = {
+    "planning": "planning",
+    "search": "searching",
+    "fetch": "fetching",
+    "rerank": "reranking",
+    "synthesis": "synthesizing",
+    "evidence_graph": "building_evidence_graph",
+    "render": "rendering",
+}
+
+# phase 名称 → step_type 映射
+_PHASE_TO_STEP_TYPE: dict[str, str] = {v: k for k, v in _STEP_TYPE_TO_PHASE.items()}
+
+
+async def retry_task(
+    db: AsyncSession,
+    task: ResearchTask,
+) -> ResearchRetryResponse:
+    """断点续跑：从最后 checkpoint 恢复执行。
+
+    对齐 API.md §3.2 POST /api/research/{task_id}/retry：
+    - 前置校验：status 必须为 failed / partially_completed / canceled 且 recoverable=true
+    - 清理崩溃残留：running → failed（含主 Step 和子 Step）
+    - 子 Step 终态化：failed/pending 子 Step → skipped（由 Phase handler 重新创建）
+    - 主 Step 重置：failed 主 Step → pending（Orchestrator 重新调度）
+    - CAS 更新 task status → pending（复用现有 _run_pipeline / _start_task 流程）
+    - 从 execution_context 构建 resume_from 恢复信息
+
+    注意：本函数不提交事务，由 API 层依赖注入的 get_db 统一提交。
+    """
+    # 1. 前置校验：状态合法性
+    if task.status not in RETRY_ALLOWED_STATUSES:
+        raise TaskStatusConflictException(
+            detail=f"任务当前状态为 {task.status}，不支持 retry 操作",
+            current_status=task.status,
+            allowed_statuses=list(RETRY_ALLOWED_STATUSES),
+        )
+    if not task.recoverable:
+        raise TaskStatusConflictException(
+            detail="该任务不可断点续跑（recoverable=false）",
+            current_status=task.status,
+        )
+
+    # 2a. 将崩溃残留的 running Step 标记为 failed（含主 Step 和子 Step）
+    #     原始执行中崩溃时，Step 可能处于 running 状态而非 failed
+    now = datetime.now(timezone.utc)
+    running_result = await db.execute(
+        sa_update(ResearchStep)
+        .where(
+            ResearchStep.task_id == task.id,
+            ResearchStep.status == "running",
+        )
+        .values(
+            status="failed",
+            error_code="E3999",
+            error_message="任务中断，Step 被放弃",
+            completed_at=now,
+        )
+    )
+    if running_result.rowcount > 0:
+        logger.info(
+            "重试前清理残留 running Step: task_id=%s, count=%d",
+            task.id, running_result.rowcount,
+        )
+
+    # 2b. 将子 Step（parent_step_id 非空）中仍非终态的标记为 skipped
+    #     子 Step 由 Phase handler 内部管理，不应被 Orchestrator 调度执行
+    child_cleanup_result = await db.execute(
+        sa_update(ResearchStep)
+        .where(
+            ResearchStep.task_id == task.id,
+            ResearchStep.parent_step_id.is_not(None),
+            ResearchStep.status.in_(["failed", "pending"]),
+        )
+        .values(status="skipped")
+    )
+    if child_cleanup_result.rowcount > 0:
+        logger.info(
+            "重试前清理残留子 Step: task_id=%s, count=%d",
+            task.id, child_cleanup_result.rowcount,
+        )
+
+    # 2c. 重置主 Step（parent_step_id 为空）：failed → pending
+    #     Orchestrator._create_step 只调度主 Step，子 Step 由 Phase handler 重新创建
+    reset_result = await db.execute(
+        sa_update(ResearchStep)
+        .where(
+            ResearchStep.task_id == task.id,
+            ResearchStep.status == "failed",
+            ResearchStep.parent_step_id == None,
+        )
+        .values(status="pending", error_code=None, error_message=None)
+    )
+    reset_count = reset_result.rowcount
+    if reset_count > 0:
+        logger.info(
+            "重试前重置主 Step: task_id=%s, count=%d",
+            task.id, reset_count,
+        )
+
+    # 3. CAS 更新 task status → pending
+    #    （利用现有 _run_pipeline / _start_task 的 pending→running CAS 流程）
+    old_status = task.status
+    result = await db.execute(
+        sa_update(ResearchTask)
+        .where(
+            ResearchTask.id == task.id,
+            ResearchTask.status == old_status,
+        )
+        .values(
+            status="pending",
+            current_phase=None,
+            error_code=None,
+            error_message=None,
+            recoverable=None,
+            completed_at=None,
+        )
+    )
+    if result.rowcount == 0:
+        raise TaskStatusConflictException(detail="任务状态已变更，无法重试")
+
+    # 同步内存对象
+    task.status = "pending"
+
+    # 4. 从 execution_context 构建 resume_from
+    ec = task.execution_context or {}
+    last_step_id = ec.get("last_completed_step_id")
+    ep = ec.get("execution_pointer", {}) if isinstance(ec, dict) else {}
+    last_phase = ep.get("phase") if isinstance(ep, dict) else None
+
+    # 查找下一个待执行的 step_type
+    next_step_type = None
+    if last_phase:
+        last_step_type = _PHASE_TO_STEP_TYPE.get(last_phase, last_phase)
+        try:
+            idx = PHASE_ORDER.index(last_step_type)
+            if idx + 1 < len(PHASE_ORDER):
+                next_step_type = PHASE_ORDER[idx + 1]
+        except ValueError:
+            pass
+
+    logger.info(
+        "断点续跑已启动: task_id=%s, last_phase=%s, next_step_type=%s, reset_failed=%d",
+        task.id, last_phase, next_step_type, reset_count,
+    )
+
+    return ResearchRetryResponse(
+        task_id=task.id,
+        status="pending",
+        resume_from=ResumeFromSchema(
+            phase=last_phase,
+            last_completed_step_id=last_step_id,
+            next_step_type=next_step_type,
+        ),
+    )
 
 
 # ── 删除任务 ────────────────────────────────────────────────────
