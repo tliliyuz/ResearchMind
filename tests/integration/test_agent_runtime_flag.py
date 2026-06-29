@@ -20,6 +20,7 @@ from app.pipeline.sse_bridge import (
     EVENT_TASK_COMPLETED,
     SSEBridge,
 )
+from app.tools.memory_tool import MemoryTool
 from app.tools.registry import ToolRegistry
 
 
@@ -58,6 +59,7 @@ def agent_registry():
             mapped_phase=phase,
             handler=handlers[phase],
         ))
+    reg.register(MemoryTool())
     return reg
 
 
@@ -84,23 +86,27 @@ class TestAgentRuntimeFlag:
         fake_redis = FakeRedis()
         monkeypatch.setattr("app.pipeline.sse_bridge.get_async_redis", AsyncMock(return_value=fake_redis))
 
-        # 模拟 LLM：按顺序返回 7 个 phase 的 tool call，最后 finish
+        # 模拟 LLM：按顺序返回 7 个 phase 的 tool call，
+        # 在 search phase 穿插一次 memory_tool，最后 finish
         from app.models.enums import STEP_TYPE_ENUM
         phase_order = list(STEP_TYPE_ENUM)
+        tool_sequence = [f"{phase}_tool" for phase in phase_order]
+        # 在 search 之后插入 memory_tool，验证全局 Tool 不破坏 phase 推进
+        tool_sequence.insert(2, "memory_tool")
         tool_call_index = {"i": 0}
 
         async def fake_chat(messages, tools=None, tool_choice=None, **kwargs):
             idx = tool_call_index["i"]
-            if idx < len(phase_order):
-                phase = phase_order[idx]
+            if idx < len(tool_sequence):
+                tool_name = tool_sequence[idx]
                 tool_call_index["i"] += 1
                 return LLMResult(
                     content="",
-                    reasoning_content=f"reasoning {phase}",
+                    reasoning_content=f"reasoning {tool_name}",
                     prompt_tokens=1,
                     completion_tokens=1,
                     total_tokens=2,
-                    tool_calls=[ToolCall(id=str(idx), name=f"{phase}_tool", arguments={})],
+                    tool_calls=[ToolCall(id=str(idx), name=tool_name, arguments={})],
                 )
             return LLMResult(
                 content="",
@@ -156,3 +162,11 @@ class TestAgentRuntimeFlag:
         assert EVENT_STEP_COMPLETED in event_types
         assert EVENT_CHECKPOINT_SAVED in event_types
         assert EVENT_TASK_COMPLETED in event_types
+
+        # 验证 memory_tool 曾被调用且不破坏 phase 推进
+        memory_actions = [
+            e for e in sse.events
+            if e["event"] == EVENT_AGENT_ACTION and e["data"].get("tool_name") == "memory_tool"
+        ]
+        assert len(memory_actions) == 1
+        assert task.status == "completed"

@@ -10,6 +10,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **MySQL "Out of sort memory" (1038)**：`get_task_list` 查询 `ORDER BY created_at DESC` 因独立索引触发 filesort，JSON 列过大时超 `sort_buffer_size`。新增复合索引 `idx_user_created(user_id, created_at DESC)` 与 `idx_user_status_created(user_id, status, created_at DESC)` 覆盖排序，避免 filesort。`idx_user` / `idx_created` 已移除。
+
 ### Changed
 - **文档目录重构与路径同步**：设计文档按资源类型重新归集，`docs/API.md`、`docs/PRD.md`、`docs/ROADMAP.md`、`docs/DEVELOPMENT.md` 移至 `resource/docs/`，`docs/TESTING_STRATEGY.md` 移至 `tests/TESTING_STRATEGY.md`。同步更新了 `README.md`、`CLAUDE.md`、`docs/CHANGELOG.md`、`resource/docs/ROADMAP.md`、`resource/docs/PRD.md`、`frontend/docs/FRONTEND.md` 以及 `app/evaluation/` 模块中的全部交叉引用路径，确保链接可点击、文档归属矩阵与当前目录一致。
 - **新增产品原型图引用**：在 `README.md` 与 `resource/docs/PRD.md` 中新增 `resource/prototypes/` 下 6 张原型图（登录页、研究创建页、运行态、历史列表页、报告页）的引用与说明，作为页面布局与交互流程的可视化参考。
@@ -21,6 +24,16 @@
 
 ### Added
 - **Agent Runtime Phase 1（Phase-Locked Loop）**：依据 `docs/agent_design.md` 实现 Tool-Using Single Agent Runtime，旧 `PipelineOrchestrator` 通过 `USE_AGENT_RUNTIME` feature flag 完整保留。新增设计决策文档 `docs/decisions/ADR-001-agent-runtime-phase1.md`。新增模块：`app/agent/`（`AgentContext`、`PhaseController`、`AgentLoop`、`AgentRuntime`、`WorkingMemory`、`ReActEntry`、`prompts`、`exceptions`）、`app/tools/`（Tool 抽象、`ToolRegistry`、7 个 phase handler 适配 Tool + `finish_tool`）、`app/services/task_lifecycle.py`（锁、CAS、紧急失败等共享原语）。`app/core/llm.py` 扩展 `chat_completion` 支持 `tools`/`tool_choice` 与 Tool Call 解析；`app/pipeline/sse_bridge.py` 新增 `agent.thought` / `agent.action` / `agent.observation` SSE 事件；`app/tasks/research_task.py` 按 flag 分支调用 `AgentRuntime` 或 `PipelineOrchestrator`。新增配置项：`USE_AGENT_RUNTIME`（当前默认 `True`，与 ADR-001 中 `False` 的设计存在 `[Deviation]`）、`MAX_AGENT_ITERATIONS`、`AGENT_WORKING_MEMORY_MAX_ENTRIES`。新增单元测试 `tests/unit/agent/`、`tests/unit/tools/`、`tests/unit/services/test_task_lifecycle.py`，集成测试 `tests/integration/test_agent_runtime_flag.py`。
+- **Agent Runtime Phase 2（Tool System）**：补齐 Tool Registry 至 9 个 Tool（7 个 phase Tool + `finish_tool` + `memory_tool`），新增设计决策文档 `docs/decisions/ADR-002-agent-runtime-phase2.md`。关键变更：
+  - 新增 `app/tools/memory_tool.py`：支持 `read` / `write` / `append` / `summary` 操作，只读写内存级 `WorkingMemory`；Long Memory 相关操作返回明确未实现提示。
+  - `app/tools/base.py` 新增轻量 JSON Schema 参数校验（类型 + 必填），不依赖外部库；`PhaseHandlerTool.execute()` 先校验后调用 handler。
+  - 7 个 phase Tool 均定义描述性可选 `parameters_schema`（`reason`、`focus_sub_question_index`、`target_url`、`top_k`、`focus_cluster` 等），不改动 handler 调用签名。
+  - `app/core/llm.py` 支持 `tool_choice: str | dict | None`；`stream_chat_completion` 透传 `tools` / `tool_choice`；流式响应可累积解析 `tool_calls`。
+  - `ToolContext` 新增 `working_memory` 字段；`AgentRuntime` 注入当前 `WorkingMemory`。
+  - `PhaseController` 将 `memory_tool` 与 `finish_tool` 同为全局 Tool；`ToolRegistry.to_openai_schema()` 始终包含全局 Tool，避免重复。
+  - 新增/更新测试：`tests/unit/tools/test_base.py`、`test_finish_tool.py`、`test_memory_tool.py`、`test_registry.py`；更新 `tests/unit/core/test_llm.py`、`tests/unit/agent/test_context.py`、`tests/integration/test_agent_runtime_flag.py`。
+  - 修复 `AgentRuntime.run()` 初始 `ToolContext` 未传入 `working_memory` 导致运行失败的回归。
+  - 为既有 Pipeline 相关测试（`tests/integration/test_pipeline_retry.py`、`tests/unit/tasks/test_research_task.py`）关闭 `USE_AGENT_RUNTIME`，确保旧 Pipeline 路径测试继续稳定运行。
 - **Pipeline 断点续跑端到端集成测试补齐**：新增 `tests/integration/test_pipeline_retry.py`（13 用例）+ 辅助模块 `tests/integration/_retry_helpers.py`，覆盖 Retry API → Service 状态重置 → Orchestrator 调度 → Step 三层复用 → DB 状态 → SSE 事件序列 → Trace 连续性。对应 `ROADMAP.md §5.5` 的 ⏳ 项已标记为 ✅。
 - **基础设施加固激活（§5.2）**：结构化日志 + Request ID 中间件 + 限流中间件正式挂载到 `main.py`。包含：
   - `setup_logging(debug=settings.DEBUG)` 在应用启动时调用，非 debug 模式输出 JSON 格式日志（含 request_id / user_id / timestamp / exception），debug 模式输出人类可读格式

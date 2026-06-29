@@ -133,9 +133,9 @@ CREATE TABLE research_tasks (
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 记录最后修改时间（ORM onupdate 维护）
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    INDEX idx_user (user_id),
-    INDEX idx_status (status),
-    INDEX idx_created (created_at DESC)
+    INDEX idx_status (status),                                              -- 全局 status 扫描（startup recovery / evaluation loader）
+    INDEX idx_user_created (user_id, created_at DESC),                      -- 用户任务列表排序，避免 filesort
+    INDEX idx_user_status_created (user_id, status, created_at DESC)        -- 用户任务列表 + 状态筛选排序，避免 filesort
 );
 ```
 
@@ -398,9 +398,9 @@ CREATE TABLE refresh_tokens (
 | 表 | 索引 | 类型 | 用途 |
 |:---|:---|:---|:---|
 | users | username (UNIQUE) | 唯一索引 | 登录查询 |
-| research_tasks | idx_user (user_id) | 普通索引 | 按用户列出任务 |
-| research_tasks | idx_status (status) | 普通索引 | 按状态筛选任务 |
-| research_tasks | idx_created (created_at DESC) | 普通索引 | 按创建时间倒序排列 |
+| research_tasks | idx_status (status) | 普通索引 | 全局 status 扫描（startup recovery / evaluation loader） |
+| research_tasks | idx_user_created (user_id, created_at DESC) | 复合索引 | 用户任务列表排序，避免 filesort |
+| research_tasks | idx_user_status_created (user_id, status, created_at DESC) | 复合索引 | 用户任务列表 + 状态筛选排序，避免 filesort |
 | research_steps | idx_task (task_id) | 普通索引 | 按任务列出步骤 |
 | research_steps | idx_parent (parent_step_id) | 普通索引 | 按父步骤查找子步骤 |
 | research_steps | idx_task_status (task_id, status) | 复合索引 | 按任务+状态筛选步骤 |

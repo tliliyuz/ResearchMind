@@ -272,3 +272,46 @@ class TestChatCompletion:
         assert exc_info.value.error_code == "E3111"
         # 空结果不重试，仅调用 1 次
         assert self.mock_client.chat.completions.create.call_count == 1
+
+    async def test_dict形式tool_choice透传(self):
+        """chat_completion 接受 dict 形式 tool_choice 并透传至请求参数"""
+        messages = [{"role": "user", "content": "Test"}]
+        tools = [{"type": "function", "function": {"name": "plan_tool"}}]
+        tool_choice = {"type": "function", "function": {"name": "plan_tool"}}
+        self.mock_client.chat.completions.create.return_value = self._make_response()
+
+        await chat_completion(messages, tools=tools, tool_choice=tool_choice)
+
+        call_kwargs = self.mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["tools"] == tools
+        assert call_kwargs["tool_choice"] == tool_choice
+
+    async def test_stream支持tools和tool_choice透传(self):
+        """stream_chat_completion 支持 tools/tool_choice 并透传"""
+        from app.core.llm import stream_chat_completion
+
+        messages = [{"role": "user", "content": "Test"}]
+        tools = [{"type": "function", "function": {"name": "plan_tool"}}]
+        tool_choice = "auto"
+
+        async def mock_stream():
+            choice = MagicMock()
+            choice.delta = MagicMock()
+            choice.delta.content = ""
+            choice.delta.reasoning_content = ""
+            choice.delta.tool_calls = []
+            choice.finish_reason = "stop"
+            chunk = MagicMock()
+            chunk.choices = [choice]
+            yield chunk
+
+        self.mock_client.chat.completions.create.return_value = mock_stream()
+
+        chunks = []
+        async for chunk in stream_chat_completion(messages, tools=tools, tool_choice=tool_choice):
+            chunks.append(chunk)
+
+        call_kwargs = self.mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["tools"] == tools
+        assert call_kwargs["tool_choice"] == tool_choice
+        assert chunks[-1].finish_reason == "stop"

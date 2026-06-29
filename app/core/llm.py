@@ -40,6 +40,7 @@ class LLMChunk:
     content: str = ""
     reasoning_content: str = ""
     finish_reason: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 @dataclass
@@ -122,11 +123,13 @@ def _max_retries(exc_type: type) -> int:
 
 
 async def stream_chat_completion(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     deep_thinking: bool = False,
     reasoning_effort: str = "high",
     model: str | None = None,
     temperature: float | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
 ) -> AsyncIterator[LLMChunk]:
     """流式调用 LLM chat/completions。
 
@@ -135,9 +138,11 @@ async def stream_chat_completion(
         deep_thinking: 是否启用深度思考（DeepSeek thinking 参数）
         reasoning_effort: 推理强度（仅 deep_thinking=true 时传递）
         model: 模型名称（None 时使用 settings.LLM_MODEL）
+        tools: OpenAI Function Calling 工具定义列表
+        tool_choice: 工具选择策略（"auto" / "none" / {"type":"function",...} / 指定 function 名字符串）
 
     Yields:
-        LLMChunk: 流式输出的 content 和 reasoning_content
+        LLMChunk: 流式输出的 content、reasoning_content、finish_reason、tool_calls
 
     Raises:
         LLMUnknownException: 调用返回未预期错误（重试耗尽后）
@@ -148,7 +153,7 @@ async def stream_chat_completion(
     # 构建请求参数
     thinking_type = "enabled" if deep_thinking else "disabled"
     extra_body = {"thinking": {"type": thinking_type}}
-    request_kwargs = {
+    request_kwargs: dict[str, Any] = {
         "model": llm_model,
         "messages": messages,
         "stream": True,
@@ -158,15 +163,25 @@ async def stream_chat_completion(
         request_kwargs["reasoning_effort"] = reasoning_effort
     if temperature is not None:
         request_kwargs["temperature"] = temperature
+    if tools:
+        request_kwargs["tools"] = tools
+    if tool_choice is not None:
+        request_kwargs["tool_choice"] = tool_choice
 
     last_exc_type = LLMUnknownException
     for attempt in range(1, 4):  # 最多 3 次尝试（含首次）
         try:
-            logger.info(f"调用 LLM (流式): model={llm_model}, deep_thinking={deep_thinking}")
+            logger.info(
+                "调用 LLM (流式): model=%s, deep_thinking=%s, tools=%s",
+                llm_model, deep_thinking, len(tools) if tools else 0,
+            )
             t0 = time.perf_counter()
             t_first = None
 
             stream = await client.chat.completions.create(**request_kwargs)
+
+            # 累积 tool_calls 索引（OpenAI 流式 tool_calls 可能分散在多个 chunk）
+            accumulated_tool_calls: dict[int, dict[str, Any]] = {}
 
             async for chunk in stream:
                 if not chunk.choices:
@@ -178,14 +193,44 @@ async def stream_chat_completion(
                 content = delta.content or ""
                 reasoning_content = getattr(delta, "reasoning_content", "") or ""
 
+                # 累积流式 tool_calls
+                delta_tool_calls = getattr(delta, "tool_calls", None) or []
+                for dtc in delta_tool_calls:
+                    index = getattr(dtc, "index", None)
+                    if index is None:
+                        continue
+                    if index not in accumulated_tool_calls:
+                        accumulated_tool_calls[index] = {
+                            "id": "",
+                            "function": {"name": "", "arguments": ""},
+                        }
+                    entry = accumulated_tool_calls[index]
+                    dtc_id = getattr(dtc, "id", None)
+                    if dtc_id:
+                        entry["id"] = dtc_id
+                    function = getattr(dtc, "function", None) or {}
+                    if function:
+                        name = function.get("name") if isinstance(function, dict) else getattr(function, "name", None)
+                        arguments = function.get("arguments") if isinstance(function, dict) else getattr(function, "arguments", None)
+                        if name:
+                            entry["function"]["name"] = name
+                        if arguments:
+                            entry["function"]["arguments"] += arguments
+
                 if t_first is None and (content or reasoning_content):
                     t_first = time.perf_counter()
                     logger.info("LLM_PERF(流式) 首Token=%.3fs", t_first - t0)
 
+                finish_reason = choice.finish_reason
+                parsed_tool_calls = None
+                if finish_reason == "tool_calls" and accumulated_tool_calls:
+                    parsed_tool_calls = _parse_tool_calls(list(accumulated_tool_calls.values()))
+
                 yield LLMChunk(
                     content=content,
                     reasoning_content=reasoning_content,
-                    finish_reason=choice.finish_reason,
+                    finish_reason=finish_reason,
+                    tool_calls=parsed_tool_calls,
                 )
             return  # 成功，退出重试循环
 
@@ -244,7 +289,7 @@ async def chat_completion(
     model: str | None = None,
     temperature: float | None = None,
     tools: list[dict[str, Any]] | None = None,
-    tool_choice: str | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
 ) -> LLMResult:
     """非流式调用 LLM chat/completions（用于 Planning / Synthesis / Rerank / Agent 等场景）。
 
@@ -255,7 +300,7 @@ async def chat_completion(
         max_tokens: 最大输出 token 数（None 时使用模型默认值）
         model: 模型名称（None 时使用 settings.LLM_FLASH_MODEL，适合轻量任务）
         tools: OpenAI Function Calling 工具定义列表
-        tool_choice: 工具选择策略（"auto" / "none" / {"type":"function",...}）
+        tool_choice: 工具选择策略（"auto" / "none" / {"type":"function",...} / 指定 function 名字符串）
 
     Returns:
         LLMResult: 包含 content、reasoning_content、token 使用量、tool_calls

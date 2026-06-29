@@ -8,6 +8,7 @@ from app.tools.base import PhaseHandlerTool, Tool
 from app.tools.evidence_graph_tool import evidence_graph_tool
 from app.tools.fetch_tool import fetch_tool
 from app.tools.finish_tool import FinishTool
+from app.tools.memory_tool import MemoryTool
 from app.tools.plan_tool import plan_tool
 from app.tools.render_tool import render_tool
 from app.tools.rerank_tool import rerank_tool
@@ -47,6 +48,7 @@ class ToolRegistry:
     def to_openai_schema(self, phase: str | None = None) -> list[dict[str, Any]]:
         """生成 OpenAI Function Calling 格式的工具 schema 列表。"""
         schemas: list[dict[str, Any]] = []
+        names: set[str] = set()
         for tool in self.list_tools(phase):
             schemas.append({
                 "type": "function",
@@ -56,15 +58,21 @@ class ToolRegistry:
                     "parameters": tool.parameters_schema,
                 },
             })
-        # finish_tool 始终可用
-        schemas.append({
-            "type": "function",
-            "function": {
-                "name": self._finish_tool.name,
-                "description": self._finish_tool.description,
-                "parameters": self._finish_tool.parameters_schema,
-            },
-        })
+            names.add(tool.name)
+
+        # 全局 Tool 始终可用
+        for global_tool in (self._finish_tool, self.get(MemoryTool.name)):
+            if global_tool is None or global_tool.name in names:
+                continue
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": global_tool.name,
+                    "description": global_tool.description,
+                    "parameters": global_tool.parameters_schema,
+                },
+            })
+            names.add(global_tool.name)
         return schemas
 
 
@@ -102,5 +110,8 @@ def build_default_tool_registry(phase_handlers: dict[str, Any] | None = None) ->
             mapped_phase=phase,
             handler=handler,
         ))
+
+    # memory_tool 全局可用，无 phase 映射
+    registry.register(MemoryTool())
 
     return registry

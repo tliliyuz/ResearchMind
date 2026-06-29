@@ -42,7 +42,7 @@ class TestToolRegistry:
         assert "plan_tool" in names
         assert "finish_tool" in names
 
-    def test_build_default_tool_registry_包含7个phase_tool(self):
+    def test_build_default_tool_registry_包含9个tool(self):
         handlers = {phase: AsyncMock() for phase in ["planning", "search", "fetch", "rerank", "synthesis", "evidence_graph", "render"]}
         reg = build_default_tool_registry(handlers)
         expected_names = [
@@ -52,9 +52,27 @@ class TestToolRegistry:
         for name in expected_names:
             assert reg.get(name) is not None
         assert reg.get("finish_tool") is not None
+        assert reg.get("memory_tool") is not None
 
     def test_build_default_tool_registry_缺失handler不注册(self):
         handlers = {"planning": AsyncMock()}
         reg = build_default_tool_registry(handlers)
         assert reg.get("plan_tool") is not None
         assert reg.get("search_tool") is None
+
+    def test_to_openai_schema_包含phase_tool和全局tool(self):
+        handlers = {phase: AsyncMock() for phase in ["planning", "search"]}
+        reg = build_default_tool_registry(handlers)
+        schemas = reg.to_openai_schema("planning")
+        names = [s["function"]["name"] for s in schemas]
+        assert "plan_tool" in names
+        assert "finish_tool" in names
+        assert "memory_tool" in names
+        assert "search_tool" not in names
+        # 校验 OpenAI Function Calling 格式
+        for schema in schemas:
+            assert schema["type"] == "function"
+            assert "name" in schema["function"]
+            assert "description" in schema["function"]
+            assert "parameters" in schema["function"]
+            assert schema["function"]["parameters"].get("type") == "object"

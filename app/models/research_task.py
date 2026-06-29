@@ -115,10 +115,13 @@ class ResearchTask(Base):
     )
 
     # ── 索引 ──
+    # idx_user_created: 覆盖 get_task_list 的 WHERE user_id=? + ORDER BY created_at DESC，避免 filesort
+    # idx_user_status_created: 覆盖带 status 筛选的 get_task_list，同样避免 filesort
+    # idx_status: 保留，覆盖 startup recovery / evaluation loader 等 status-only 查询
     __table_args__ = (
-        sa.Index("idx_user", "user_id"),
         sa.Index("idx_status", "status"),
-        sa.Index("idx_created", sa.text("created_at DESC")),
+        sa.Index("idx_user_created", "user_id", sa.text("created_at DESC")),
+        sa.Index("idx_user_status_created", "user_id", "status", sa.text("created_at DESC")),
     )
 
     # ── 关联 ──

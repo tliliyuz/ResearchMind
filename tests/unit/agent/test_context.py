@@ -7,6 +7,7 @@ import pytest
 from app.agent.context import AgentContext
 from app.agent.state import PhaseController
 from app.tools.base import Tool
+from app.tools.memory_tool import MemoryTool
 from app.tools.registry import ToolRegistry
 
 
@@ -28,6 +29,7 @@ def registry():
     reg = ToolRegistry()
     for phase in PhaseController.PHASE_ORDER:
         reg.register(DummyTool(f"{phase}_tool", phase))
+    reg.register(MemoryTool())
     return reg
 
 
@@ -75,12 +77,13 @@ class TestPhaseController:
         ctrl = PhaseController(ctx, registry)
         assert ctrl.current_phase == "search"
 
-    def test_get_available_tools_仅含当前phase和finish(self, registry):
+    def test_get_available_tools_含当前phase和全局tool(self, registry):
         ctx = AgentContext(current_phase="fetch")
         ctrl = PhaseController(ctx, registry)
         names = {t.name for t in ctrl.get_available_tools()}
         assert "fetch_tool" in names
         assert "finish_tool" in names
+        assert "memory_tool" in names
         assert "plan_tool" not in names
         assert "search_tool" not in names
 

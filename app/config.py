@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_MODEL: str = "deepseek-v4-pro"
-    LLM_FLASH_MODEL: str = "deepseek-v4-flash"  # 轻量任务（Rerank / 标题生成）
+    LLM_FLASH_MODEL: str = "mimo-v2.5"  # 轻量任务（Rerank / 标题生成）
 
     # [v2] 分级模型（预留）
     # LLM_PLANNING_MODEL: str = "deepseek-v4-pro"

@@ -57,6 +57,12 @@ from tests.integration._retry_helpers import (
 pytestmark = [pytest.mark.integration, pytest.mark.retry]
 
 
+@pytest.fixture(autouse=True)
+def _disable_agent_runtime(monkeypatch):
+    """Pipeline retry 集成测试针对 PipelineOrchestrator，关闭 Agent Runtime feature flag。"""
+    monkeypatch.setattr("app.config.settings.USE_AGENT_RUNTIME", False)
+
+
 # ═══════════════════════════════════════════════════════════════
 # 1. 已完成任务 Retry：所有阶段跳过
 # ═══════════════════════════════════════════════════════════════

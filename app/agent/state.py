@@ -8,12 +8,14 @@ from __future__ import annotations
 from app.models.enums import STEP_TYPE_ENUM
 from app.tools.base import Tool
 from app.tools.finish_tool import FinishTool
+from app.tools.memory_tool import MemoryTool
 
 
 class PhaseController:
     """Phase 顺序与可用 Tool 控制器。"""
 
     PHASE_ORDER: list[str] = list(STEP_TYPE_ENUM)
+    GLOBAL_TOOLS: set[str] = {FinishTool.name, MemoryTool.name}
 
     def __init__(self, agent_context, tool_registry):
         """初始化。
@@ -43,12 +45,15 @@ class PhaseController:
         self._ctx.current_phase = self.PHASE_ORDER[-1]
 
     def get_available_tools(self) -> list[Tool]:
-        """返回当前 phase 可用的 Tool 列表（始终包含 finish_tool）。"""
+        """返回当前 phase 可用的 Tool 列表（始终包含 finish_tool 与 memory_tool）。"""
         phase = self._ctx.current_phase
         tools: list[Tool] = []
         if phase is not None:
             tools.extend(self._registry.list_tools(phase))
         tools.append(self._registry.get_finish_tool())
+        memory_tool = self._registry.get(MemoryTool.name)
+        if memory_tool is not None:
+            tools.append(memory_tool)
         return tools
 
     def is_tool_available(self, name: str) -> bool:

@@ -131,6 +131,7 @@ class AgentRuntime:
                 sse_bridge=self._sse,
                 trace_recorder=self._trace,
                 agent_context=self._agent_context,
+                working_memory=self._working_memory,
             )
             await self._loop.run(tool_context, self._execute_tool)
 
@@ -192,6 +193,7 @@ class AgentRuntime:
             sse_bridge=self._sse,
             trace_recorder=self._trace,
             agent_context=self._agent_context,  # type: ignore[arg-type]
+            working_memory=self._working_memory,  # type: ignore[arg-type]
         )
 
     async def _create_step(self, step_type: str) -> ResearchStep:

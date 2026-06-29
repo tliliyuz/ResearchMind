@@ -15,6 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import AgentContext
+from app.agent.memory import WorkingMemory
 from app.core.trace_recorder import TraceRecorder
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
@@ -52,6 +53,7 @@ class ToolContext:
     sse_bridge: SSEBridge
     trace_recorder: TraceRecorder
     agent_context: AgentContext
+    working_memory: WorkingMemory
 
 
 @runtime_checkable
@@ -70,6 +72,65 @@ class Tool(Protocol):
     async def execute(self, ctx: ToolContext, **params: Any) -> ToolResult:
         """执行 Tool，返回 ToolResult。"""
         ...
+
+
+def _validate_param_type(name: str, value: Any, expected: str) -> str | None:
+    """校验单个参数的类型，返回错误信息或 None。
+
+    仅支持 JSON Schema 基础类型：string / integer / number / boolean / object / array。
+    """
+    if expected == "string":
+        if not isinstance(value, str):
+            return f"参数 '{name}' 应为字符串，实际为 {type(value).__name__}"
+    elif expected == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"参数 '{name}' 应为整数，实际为 {type(value).__name__}"
+    elif expected == "number":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return f"参数 '{name}' 应为数字，实际为 {type(value).__name__}"
+    elif expected == "boolean":
+        if not isinstance(value, bool):
+            return f"参数 '{name}' 应为布尔值，实际为 {type(value).__name__}"
+    elif expected == "object":
+        if not isinstance(value, dict):
+            return f"参数 '{name}' 应为对象，实际为 {type(value).__name__}"
+    elif expected == "array":
+        if not isinstance(value, list):
+            return f"参数 '{name}' 应为数组，实际为 {type(value).__name__}"
+    return None
+
+
+def validate_tool_params(params: dict[str, Any], schema: dict[str, Any]) -> list[str]:
+    """轻量 JSON Schema 校验（仅类型与必填）。
+
+    - 不拒绝未知字段
+    - 仅校验 schema.properties 中声明的字段类型
+    - 校验 required 字段是否存在
+    """
+    errors: list[str] = []
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return errors
+
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+
+    for name in required:
+        if name not in params:
+            errors.append(f"缺少必填参数 '{name}'")
+
+    for name, definition in properties.items():
+        if name not in params:
+            continue
+        if not isinstance(definition, dict):
+            continue
+        expected_type = definition.get("type")
+        if not expected_type:
+            continue
+        error = _validate_param_type(name, params[name], expected_type)
+        if error:
+            errors.append(error)
+
+    return errors
 
 
 class PhaseHandlerTool:
@@ -93,8 +154,18 @@ class PhaseHandlerTool:
         self.parameters_schema = parameters_schema or {"type": "object", "properties": {}}
 
     async def execute(self, ctx: ToolContext, **params: Any) -> ToolResult:
-        """调用底层 phase handler 并包装结果。"""
+        """先校验参数，再调用底层 phase handler 并包装结果。"""
         import time
+
+        validation_errors = validate_tool_params(params, self.parameters_schema)
+        if validation_errors:
+            return ToolResult(
+                success=False,
+                output={},
+                observation=f"参数校验失败: {'; '.join(validation_errors)}",
+                error_message="tool_param_validation_failed",
+                duration_ms=0,
+            )
 
         t0 = time.perf_counter()
         try:

@@ -13,6 +13,12 @@ from app.core.security import hash_password
 from app.tasks.research_task import _build_trace_from_steps, _emergency_fail, _run_pipeline
 
 
+@pytest.fixture(autouse=True)
+def _disable_agent_runtime(monkeypatch):
+    """本模块测试 PipelineOrchestrator 分支，关闭 Agent Runtime feature flag。"""
+    monkeypatch.setattr("app.config.settings.USE_AGENT_RUNTIME", False)
+
+
 async def _seed_user_and_task(db_session, task_status: str = "pending") -> ResearchTask:
     """创建测试用户与任务。"""
     user = User(
