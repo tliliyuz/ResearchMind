@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.refresh_token import RefreshToken
 from app.models.research_task import ResearchTask
 from app.models.research_step import ResearchStep
+from app.models.agent_memory_entry import AgentMemoryEntry
 from app.models.research_source import ResearchSource
 from app.models.evidence_item import EvidenceItem
 from app.models.report_section import ReportSection
@@ -19,6 +20,7 @@ __all__ = [
     "RefreshToken",
     "ResearchTask",
     "ResearchStep",
+    "AgentMemoryEntry",
     "ResearchSource",
     "EvidenceItem",
     "ReportSection",

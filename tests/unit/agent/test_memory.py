@@ -74,3 +74,22 @@ class TestWorkingMemory:
     def test_from_dict_list_过滤非dict(self):
         restored = WorkingMemory.from_dict_list([None, {"iteration": 1, "phase": "p"}], max_entries=5)
         assert len(restored.recent()) == 1
+
+    def test_add_后进入pending队列(self):
+        memory = WorkingMemory()
+        entry = ReActEntry(iteration=1, phase="planning")
+        memory.add(entry)
+        assert memory.pending_entries() == [entry]
+
+    def test_mark_persisted_清空pending(self):
+        memory = WorkingMemory()
+        memory.add(ReActEntry(iteration=1, phase="planning"))
+        memory.mark_persisted()
+        assert memory.pending_entries() == []
+        # entries 仍保留在内存缓冲区
+        assert len(memory.recent()) == 1
+
+    def test_from_dict_list_不进入pending队列(self):
+        memory = WorkingMemory.from_dict_list([{"iteration": 1, "phase": "planning"}], max_entries=5)
+        assert memory.pending_entries() == []
+        assert len(memory.recent()) == 1

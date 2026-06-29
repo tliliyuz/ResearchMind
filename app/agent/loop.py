@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from app.agent.exceptions import AgentLoopExhaustedError
@@ -22,7 +23,16 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-ExecuteToolCallback = Callable[[Tool, ToolCall], Awaitable[ToolResult]]
+
+@dataclass
+class ToolExecutionResult:
+    """Tool 执行回调返回结果，包含 ToolResult 与关联 Step ID。"""
+
+    result: ToolResult
+    step_id: str | None = None
+
+
+ExecuteToolCallback = Callable[[Tool, ToolCall], Awaitable[ToolExecutionResult]]
 
 
 class AgentLoop:
@@ -114,16 +124,20 @@ class AgentLoop:
 
                 if tool is None:
                     observation = f"Tool '{tool_call.name}' 在当前 phase 不可用"
-                    result = ToolResult(
-                        success=False,
-                        output={},
-                        observation=observation,
-                        error_message=observation,
+                    exec_result = ToolExecutionResult(
+                        result=ToolResult(
+                            success=False,
+                            output={},
+                            observation=observation,
+                            error_message=observation,
+                        ),
+                        step_id=None,
                     )
                 else:
-                    result = await execute_callback(tool, tool_call)
-                    observation = result.observation
+                    exec_result = await execute_callback(tool, tool_call)
+                    observation = exec_result.result.observation
 
+                result = exec_result.result
                 await self._sse.publish(EVENT_AGENT_OBSERVATION, {
                     "iteration": iteration,
                     "phase": current_phase,
@@ -142,6 +156,7 @@ class AgentLoop:
                     arguments=tool_call.arguments,
                     observation=observation,
                     tool_output_summary=self._summarize_output(result.output),
+                    step_id=exec_result.step_id,
                 ))
 
                 # 当前 phase 的 primary tool 成功执行一次即标记完成
@@ -200,11 +215,11 @@ class AgentLoop:
         """对 Tool output 做摘要，避免 prompt 过长。"""
         if not isinstance(output, dict):
             return {}
-        # 仅保留关键计数字段
+        # 仅保留关键计数字段；memory_tool 追加的 note 也需保留以便回溯
         keys = [
             "sub_questions", "total_results", "successful", "evidence_count",
             "clusters_count", "conflicts_count", "gaps_count", "item_count",
-            "sections_count", "citations_count",
+            "sections_count", "citations_count", "memory_note",
         ]
         summary = {k: output[k] for k in keys if k in output}
         if not summary:

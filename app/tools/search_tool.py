@@ -20,7 +20,7 @@ _SEARCH_TOOL_SCHEMA = {
 
 search_tool = PhaseHandlerTool(
     name="search_tool",
-    description="Search 阶段：根据子问题调用搜索 API 获取候选来源",
+    description="Search 阶段主要工具：根据 planning 阶段生成的子问题调用搜索 API，获取候选来源与初步结果。进入 search 阶段后必须首先调用此工具。",
     mapped_phase="search",
     handler=run_search,
     parameters_schema=_SEARCH_TOOL_SCHEMA,

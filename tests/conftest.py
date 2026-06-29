@@ -114,6 +114,7 @@ async def test_engine():
         from app.models.refresh_token import RefreshToken  # noqa: F401
         from app.models.research_task import ResearchTask  # noqa: F401
         from app.models.research_step import ResearchStep  # noqa: F401
+        from app.models.agent_memory_entry import AgentMemoryEntry  # noqa: F401
         from app.models.research_source import ResearchSource  # noqa: F401
         from app.models.evidence_item import EvidenceItem  # noqa: F401
         from app.models.report_section import ReportSection  # noqa: F401

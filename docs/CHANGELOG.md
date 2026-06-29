@@ -12,6 +12,18 @@
 
 ### Fixed
 - **MySQL "Out of sort memory" (1038)**：`get_task_list` 查询 `ORDER BY created_at DESC` 因独立索引触发 filesort，JSON 列过大时超 `sort_buffer_size`。新增复合索引 `idx_user_created(user_id, created_at DESC)` 与 `idx_user_status_created(user_id, status, created_at DESC)` 覆盖排序，避免 filesort。`idx_user` / `idx_created` 已移除。
+- **Agent Runtime Phase 3 `memory_tool` 重复写入与 observation 膨胀**：`memory_tool` 内部自行追加 ReActEntry，AgentLoop 执行完同一调用又追加一条，导致同一操作在 `agent_memory_entries` 中重复；`read` 操作把完整 Working Memory 历史拼进 observation，引发 prompt/DB 指数膨胀。修复：
+  - `memory_tool` 不再自行写入 `WorkingMemory`，统一由 `AgentLoop` 记录；`output` 保留 `memory_note` 供 AgentLoop 摘要。
+  - `memory_tool` read 仅返回统计摘要（条目数、最近 phase/tool），不再回传完整历史。
+  - `AgentRuntime._finalize_task()` 任务完成时追加 `entry_type="finish"` 记录，使 ReAct Trace 有明确终止标记。
+  - 更新 `tests/unit/tools/test_memory_tool.py` 与 `tests/integration/test_agent_runtime_flag.py` 对应断言。
+- **Agent Runtime search phase 陷入 `memory_tool` 循环导致迭代耗尽**：`planning` 完成后 LLM 进入 `search` phase，但因 system prompt 与 phase instruction 未明确指定当前阶段必须调用的主工具，LLM 反复调用 `memory_tool`（read/summary/append）而不调用 `search_tool`，最终触发 `AgentLoopExhaustedError`。修复：
+  - `build_agent_system_prompt()` 新增 `_PHASE_PRIMARY_TOOL` 映射，在 prompt 中明确写出当前阶段主要工具（如 `search_tool`），并声明必须调用它完成实际工作。
+  - system prompt 明确限制 `memory_tool` 仅用于快速回顾/追加备注，禁止连续多次调用，不能替代阶段主工具。
+  - system prompt 修正 `finish_tool` 的用途描述：当前阶段目标达成后由系统自动推进，仅在全部完成或需要提前终止时才调用 `finish_tool`。
+  - `build_phase_instruction()` 改为直接指令 LLM 调用当前阶段主工具。
+  - `memory_tool.description` 增加「辅助工具」「禁止连续多次调用」等约束；`search_tool.description` 强调其为 search phase 主要工具、进入该阶段后必须首先调用。
+  - 新增 `tests/unit/agent/test_prompts.py` 覆盖 prompt 内容断言。
 
 ### Changed
 - **文档目录重构与路径同步**：设计文档按资源类型重新归集，`docs/API.md`、`docs/PRD.md`、`docs/ROADMAP.md`、`docs/DEVELOPMENT.md` 移至 `resource/docs/`，`docs/TESTING_STRATEGY.md` 移至 `tests/TESTING_STRATEGY.md`。同步更新了 `README.md`、`CLAUDE.md`、`docs/CHANGELOG.md`、`resource/docs/ROADMAP.md`、`resource/docs/PRD.md`、`frontend/docs/FRONTEND.md` 以及 `app/evaluation/` 模块中的全部交叉引用路径，确保链接可点击、文档归属矩阵与当前目录一致。
@@ -28,6 +40,14 @@
   - 新增 `app/tools/memory_tool.py`：支持 `read` / `write` / `append` / `summary` 操作，只读写内存级 `WorkingMemory`；Long Memory 相关操作返回明确未实现提示。
   - `app/tools/base.py` 新增轻量 JSON Schema 参数校验（类型 + 必填），不依赖外部库；`PhaseHandlerTool.execute()` 先校验后调用 handler。
   - 7 个 phase Tool 均定义描述性可选 `parameters_schema`（`reason`、`focus_sub_question_index`、`target_url`、`top_k`、`focus_cluster` 等），不改动 handler 调用签名。
+- **Agent Runtime Phase 3（Working Memory 持久化）**：将 ReAct Trace 持久化到新增表 `agent_memory_entries`，新增设计决策文档 `docs/decisions/ADR-003-agent-runtime-phase3.md`。关键变更：
+  - 新增 `app/models/agent_memory_entry.py` 与 `MEMORY_ENTRY_TYPE_ENUM`（thought / action / observation / finish），更新 `docs/DATABASE.md` 表结构、索引、外键策略。
+  - 新增 `app/services/agent_memory_service.py`：提供 `create/list/build_working_memory/persist_pending_entries` API，`entry_type` 由 `ReActEntry` 字段推导。
+  - `app/agent/memory.py` 扩展 `WorkingMemory` 支持 `_pending_persist` 队列，已持久化数据通过 `from_dict_list` / `build_working_memory` 加载时不进入 pending。
+  - `app/agent/runtime.py` 改为从 DB 加载 WorkingMemory（DB 为空时 fallback 旧 `execution_context.working_memory`）；`_execute_tool` 返回 `ToolExecutionResult(result, step_id)`；在 step 完成 / 失败及 loop 结束后统一 flush pending entries；`execution_context` 不再写入 `working_memory` JSON。
+  - `app/agent/loop.py` 回调协议改为返回 `ToolExecutionResult`，创建的 `ReActEntry` 写入 `step_id`。
+  - 新增 Alembic 迁移 `839874693c3b_添加_agent_memory_entries_表.py`。
+  - 新增/更新测试：`tests/unit/models/test_agent_memory_entry.py`、`tests/unit/services/test_agent_memory_service.py`、扩展 `tests/unit/agent/test_memory.py` 与 `tests/unit/agent/test_loop.py`、扩展 `tests/integration/test_agent_runtime_flag.py` 验证 DB entries 与断点续跑恢复。
   - `app/core/llm.py` 支持 `tool_choice: str | dict | None`；`stream_chat_completion` 透传 `tools` / `tool_choice`；流式响应可累积解析 `tool_calls`。
   - `ToolContext` 新增 `working_memory` 字段；`AgentRuntime` 注入当前 `WorkingMemory`。
   - `PhaseController` 将 `memory_tool` 与 `finish_tool` 同为全局 Tool；`ToolRegistry.to_openai_schema()` 始终包含全局 Tool，避免重复。

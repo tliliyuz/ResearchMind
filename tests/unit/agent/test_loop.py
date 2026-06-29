@@ -6,7 +6,7 @@ import pytest
 
 from app.agent.context import AgentContext
 from app.agent.exceptions import AgentLoopExhaustedError
-from app.agent.loop import AgentLoop
+from app.agent.loop import AgentLoop, ToolExecutionResult
 from app.agent.memory import WorkingMemory
 from app.agent.state import PhaseController
 from app.core.llm import LLMResult, ToolCall
@@ -62,8 +62,14 @@ def _callback_factory(agent_ctx):
     async def callback(tool, tool_call):
         if tool.name == "finish_tool":
             agent_ctx.finished = True
-            return ToolResult(success=True, output={}, observation="finished")
-        return ToolResult(success=True, output={"ok": True}, observation=f"obs {tool.name}")
+            return ToolExecutionResult(
+                result=ToolResult(success=True, output={}, observation="finished"),
+                step_id=None,
+            )
+        return ToolExecutionResult(
+            result=ToolResult(success=True, output={"ok": True}, observation=f"obs {tool.name}"),
+            step_id="step-1",
+        )
     return callback
 
 
@@ -118,7 +124,10 @@ class TestAgentLoop:
             return _make_llm_result(tool_calls=[ToolCall(id="1", name="plan_tool", arguments={})])
 
         monkeypatch.setattr("app.agent.loop.chat_completion", fake_chat)
-        callback = AsyncMock(return_value=ToolResult(success=True, output={"ok": True}, observation="ok"))
+        callback = AsyncMock(return_value=ToolExecutionResult(
+            result=ToolResult(success=True, output={"ok": True}, observation="ok"),
+            step_id="step-1",
+        ))
 
         with pytest.raises(AgentLoopExhaustedError):
             await loop.run(tool_ctx, callback)

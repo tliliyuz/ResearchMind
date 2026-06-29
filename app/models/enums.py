@@ -30,3 +30,7 @@ STEP_STATUS_ENUM = (
 # ── 来源表 ──────────────────────────────────────────────────────
 
 FETCH_STATUS_ENUM = ("success", "timeout", "blocked", "empty", "dns_error")
+
+# ── Agent Memory 表 ─────────────────────────────────────────────
+
+MEMORY_ENTRY_TYPE_ENUM = ("thought", "action", "observation", "finish")

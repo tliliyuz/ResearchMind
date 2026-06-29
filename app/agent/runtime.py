@@ -10,7 +10,7 @@ from sqlalchemy import func, select as sa_select, update as sa_update
 from sqlalchemy.orm import aliased
 
 from app.agent.context import AgentContext
-from app.agent.loop import AgentLoop
+from app.agent.loop import AgentLoop, ToolExecutionResult
 from app.agent.memory import ReActEntry, WorkingMemory
 from app.agent.state import PhaseController
 from app.config import settings
@@ -37,6 +37,7 @@ from app.pipeline.sse_bridge import (
     EVENT_TASK_PROGRESS,
     SSEBridge,
 )
+from app.services import agent_memory_service
 from app.services.pipeline_orchestrator import (
     PHASE_ORDER,
     STEP_TYPE_TO_PHASE,
@@ -113,7 +114,7 @@ class AgentRuntime:
                 logger.warning("任务未成功启动，停止 Agent Runtime: task_id=%s", task_id)
                 return
 
-            self._agent_context, self._working_memory = self._load_or_create_context()
+            self._agent_context, self._working_memory = await self._load_or_create_context()
             self._phase_controller = PhaseController(
                 self._agent_context, self._registry
             )
@@ -135,6 +136,8 @@ class AgentRuntime:
             )
             await self._loop.run(tool_context, self._execute_tool)
 
+            # 捕获 loop 中非 tool 分支（LLM 失败 / 无 tool call）产生的 entries
+            await self._persist_memory_entries()
             await self._finalize_task()
 
         except Exception as e:
@@ -143,23 +146,29 @@ class AgentRuntime:
         finally:
             await self._lock_handle.release()
 
-    def _load_or_create_context(self) -> tuple[AgentContext, WorkingMemory]:
-        """从 execution_context 恢复或新建 AgentContext / WorkingMemory。"""
+    async def _load_or_create_context(self) -> tuple[AgentContext, WorkingMemory]:
+        """从 DB 或 execution_context 恢复或新建 AgentContext / WorkingMemory。"""
         execution_context = self._task.execution_context or {}
         agent_ctx_dict = execution_context.get("agent_context") if isinstance(execution_context, dict) else None
-        memory_items = execution_context.get("working_memory") if isinstance(execution_context, dict) else None
 
         agent_context = AgentContext.from_dict(agent_ctx_dict)
-        working_memory = WorkingMemory.from_dict_list(
-            memory_items, max_entries=self._memory_max_entries
+        # Phase 3：优先从 agent_memory_entries 表加载；DB 为空时 fallback 旧 JSON
+        working_memory = await agent_memory_service.build_working_memory(
+            self._session, str(self._task.id), max_entries=self._memory_max_entries
         )
+        if not working_memory.recent():
+            memory_items = execution_context.get("working_memory") if isinstance(execution_context, dict) else None
+            working_memory = WorkingMemory.from_dict_list(
+                memory_items, max_entries=self._memory_max_entries
+            )
         return agent_context, working_memory
 
-    async def _execute_tool(self, tool: Tool, tool_call: ToolCall) -> ToolResult:
+    async def _execute_tool(self, tool: Tool, tool_call: ToolCall) -> ToolExecutionResult:
         """AgentLoop 的 Tool 执行回调：创建 Step → 执行 Tool → 持久化。"""
         if tool.mapped_phase is None:
             # finish_tool 等无 phase 映射的 Tool，直接执行，不创建 Step
-            return await tool.execute(self._tool_context_with_step(None), **tool_call.arguments)
+            result = await tool.execute(self._tool_context_with_step(None), **tool_call.arguments)
+            return ToolExecutionResult(result=result, step_id=None)
 
         step = await self._create_step(tool.mapped_phase)
         await self._start_step(step)
@@ -182,7 +191,7 @@ class AgentRuntime:
         else:
             await self._fail_step(step, result)
 
-        return result
+        return ToolExecutionResult(result=result, step_id=str(step.id))
 
     def _tool_context_with_step(self, step: ResearchStep | None) -> ToolContext:
         """构造包含指定 Step 的 ToolContext。"""
@@ -234,6 +243,14 @@ class AgentRuntime:
             "timestamp": now.isoformat(),
         })
 
+    async def _persist_memory_entries(self) -> None:
+        """将 WorkingMemory 中待持久化 entries 写入 DB。"""
+        if self._working_memory is None:
+            return
+        await agent_memory_service.persist_pending_entries(
+            self._session, str(self._task.id), self._working_memory
+        )
+
     async def _complete_step(self, step: ResearchStep, result: ToolResult) -> None:
         """Step 成功完成：写入 output、trace、SSE、checkpoint。"""
         now = datetime.now(timezone.utc)
@@ -252,6 +269,7 @@ class AgentRuntime:
         self._agent_context.completed_phases.add(step.step_type)
         await self._record_phase_trace(step, duration_ms or 0, step.output)
         await self._update_execution_context(step, phase_name)
+        await self._persist_memory_entries()
         await self._session.commit()
 
         await self._sse.publish(EVENT_STEP_COMPLETED, {
@@ -293,6 +311,8 @@ class AgentRuntime:
         step.error_message = result.error_message or "Tool 执行失败"
         await self._session.flush()
 
+        await self._persist_memory_entries()
+
         await self._sse.publish(EVENT_STEP_FAILED, {
             "step_id": str(step.id),
             "error_type": "ToolExecutionFailed",
@@ -303,7 +323,7 @@ class AgentRuntime:
         )
 
     async def _update_execution_context(self, step: ResearchStep, phase_name: str) -> None:
-        """更新 execution_context（包含 agent_context 与 working_memory）。"""
+        """更新 execution_context（包含 agent_context）。"""
         total = self._task.total_steps or 1
 
         terminal_statuses = {"completed", "skipped", "failed"}
@@ -361,7 +381,7 @@ class AgentRuntime:
                 "progress": progress,
             },
             "agent_context": self._agent_context.to_dict(),
-            "working_memory": self._working_memory.to_dict_list(),
+            # Phase 3：working_memory 不再写入 execution_context，唯一真实来源为 agent_memory_entries 表
         }
         await self._session.flush()
 
@@ -374,6 +394,17 @@ class AgentRuntime:
         new_status, error_info = self._resolver.resolve(
             self._task, steps, evidence_count,
         )
+
+        # 记录任务结束 finish entry，使 agent_memory_entries 包含明确的终止标记
+        if self._working_memory is not None and self._agent_context is not None:
+            self._working_memory.add(ReActEntry(
+                iteration=self._agent_context.iteration_count,
+                phase="finish",
+                tool_name="finish_tool",
+                observation=f"Agent 结束运行，任务状态: {new_status}",
+                tool_output_summary={"status": new_status},
+            ))
+            await self._persist_memory_entries()
 
         now = datetime.now(timezone.utc)
         trace_data = self._trace.finish()

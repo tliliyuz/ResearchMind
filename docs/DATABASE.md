@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-28 |
+| 最后更新 | 2026-06-30 |
 
 > 本文档是 **数据库表结构、索引策略、外键级联规则** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。状态机字段语义（Task / Phase / Step 三层状态、Execution Context、Evidence Completeness Threshold）见 [ARCHITECTURE.md §3](ARCHITECTURE.md#3-研究任务状态机)，Pipeline 各阶段的输入输出数据持久化见 [RESEARCH_PIPELINE.md](RESEARCH_PIPELINE.md)，接口中的请求/响应字段见 [API.md](API.md)，产品需求见 [PRD.md](PRD.md)。
 
@@ -34,6 +34,9 @@ users (用户表)
 research_tasks (研究任务表) ────┬── research_steps (DAG 执行树)
   │                             │     │
   │ 1:N                         │     │ 产生
+  │                             │     │
+  │                             │     ├── agent_memory_entries (ReAct Trace)
+  │                             │     │
   ▼                             ▼     ▼
 research_sources (来源表) ◄────┼── evidence_items (证据条目表)
   │                             │     │
@@ -56,6 +59,7 @@ report_sections (报告章节表) ◄─────────┘
 - 一个来源可关联多条证据，每条证据属于一个来源（1:N）
 - 一个步骤可产生多条证据，每条证据可选关联产生它的步骤（N:1，可为空）
 - 一个任务包含多个报告章节，章节之间可嵌套（自引用 1:N）
+- 一个任务包含多条 Agent Memory Entry，每条 Entry 可选关联产生它的 Step（N:1，可为空）
 - 章节与证据之间为多对多关系（M:N），通过 `section_evidence` 关联表实现
 
 ---
@@ -391,6 +395,40 @@ CREATE TABLE refresh_tokens (
 
 > refresh_token 的轮换、泄露检测、改密吊销和过期清理策略见 [API.md §2](API.md#2-认证接口)。
 
+### 2.9 Agent Memory Entries 表 `agent_memory_entries`
+
+> Phase 3 新增：持久化单次任务内的 ReAct Trace（Thought / Action / Observation / Finish），作为 WorkingMemory 的断点续跑与调试来源。权威设计见 `docs/agent_design.md` §7 与 `docs/decisions/ADR-003-agent-runtime-phase3.md`。
+
+```sql
+CREATE TABLE agent_memory_entries (
+    id              UUID PRIMARY KEY,
+    task_id         UUID NOT NULL,
+    step_id         UUID DEFAULT NULL,                          -- 关联 ResearchStep.id
+    iteration       INT NOT NULL,                               -- Agent Loop 轮次
+    phase           VARCHAR(50) NOT NULL,                       -- 所属 phase
+    entry_type      ENUM('thought','action','observation','finish') NOT NULL,
+    content         JSON NOT NULL,                              -- ReActEntry 完整字段
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (task_id) REFERENCES research_tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (step_id) REFERENCES research_steps(id) ON DELETE SET NULL,
+    INDEX idx_agent_memory_task (task_id),
+    INDEX idx_agent_memory_task_created (task_id, created_at DESC),
+    INDEX idx_agent_memory_task_iteration (task_id, iteration)
+);
+```
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| id | UUID | 主键 |
+| task_id | UUID | 所属任务 ID，外键关联 `research_tasks.id` |
+| step_id | UUID | 产生该 Entry 的 Step ID，外键关联 `research_steps.id`，可为空 |
+| iteration | INT | Agent Loop 轮次 |
+| phase | VARCHAR(50) | 所属 phase |
+| entry_type | ENUM | 条目类型：thought / action / observation / finish |
+| content | JSON | ReActEntry 完整字段（含 thought / tool_name / observation / step_id / timestamp 等） |
+| created_at | DATETIME | 创建时间（UTC） |
+
 ---
 
 ## 3. 索引策略
@@ -411,6 +449,9 @@ CREATE TABLE refresh_tokens (
 | evidence_items | idx_score (task_id, relevance_score DESC) | 复合索引 | 按任务+相关性排序 |
 | report_sections | idx_task (task_id) | 普通索引 | 按任务列出章节 |
 | report_sections | idx_parent (parent_section_id) | 普通索引 | 按父章节查找子章节 |
+| agent_memory_entries | idx_agent_memory_task (task_id) | 普通索引 | 按任务列出 ReAct Trace |
+| agent_memory_entries | idx_agent_memory_task_created (task_id, created_at DESC) | 复合索引 | 按任务 + 时间倒序，用于恢复最近 N 条 WorkingMemory |
+| agent_memory_entries | idx_agent_memory_task_iteration (task_id, iteration) | 复合索引 | 按任务 + 迭代次数查询 |
 | refresh_tokens | idx_user_id (user_id) | 普通索引 | 按用户查询刷新令牌 |
 | refresh_tokens | idx_token_hash (token_hash) | 普通索引 | 按 token 哈希查找（刷新校验入口） |
 | refresh_tokens | idx_user_active (user_id, revoked_at, expires_at) | 复合索引 | 查询用户有效 token + 改密批量吊销 + Rotation 检测 |
@@ -434,12 +475,14 @@ CREATE TABLE refresh_tokens (
 | `report_sections.parent_section_id` | `report_sections(id)` | `ON DELETE CASCADE` | 父章节删除时子章节一并删除 |
 | `section_evidence.section_id` | `report_sections(id)` | `ON DELETE CASCADE` | 章节删除时关联自动解除 |
 | `section_evidence.evidence_id` | `evidence_items(id)` | `ON DELETE CASCADE` | 证据删除时关联自动解除 |
+| `agent_memory_entries.task_id` | `research_tasks(id)` | `ON DELETE CASCADE` | 任务删除时 ReAct Trace 一并删除 |
+| `agent_memory_entries.step_id` | `research_steps(id)` | `ON DELETE SET NULL` | Step 删除后 Trace 记录保留，仅解除关联 |
 | `refresh_tokens.user_id` | `users(id)` | `ON DELETE CASCADE` | 用户删除时自动清理其刷新令牌，避免悬空数据 |
 
 **级联策略总结**：
 - **用户 → 任务**：`RESTRICT`（保护用户数据，防止级联误删）
 - **用户 → 刷新令牌**：`CASCADE`（用户删除时自动清理令牌）
-- **任务 → 派生数据**：`CASCADE`（任务删除时清理全部派生数据：steps / sources / evidence / sections / section_evidence）
+- **任务 → 派生数据**：`CASCADE`（任务删除时清理全部派生数据：steps / sources / evidence / sections / section_evidence / agent_memory_entries）
 - **自引用外键**：`parent_step_id` → `SET NULL`（保留子步骤）；`parent_section_id` → `CASCADE`（删除子树）
 
 > **[Deviation] `delete_task` 使用 bulk `sa_delete` 而非 ORM 级联删除**：SQLite 异步驱动下，SQLAlchemy ORM 在删除 `research_tasks` 父行前会尝试将子表外键 `SET NULL`，而 `task_id` 列为 `NOT NULL`，导致 `IntegrityError`。因此 `research_service.delete_task()` 改用 `sa_delete(ResearchTask).where(...)` 直接执行 bulk DELETE，依赖数据库层 `ON DELETE CASCADE` 约束完成级联清理。此偏差在 MySQL 生产环境无影响（InnoDB 原生支持 CASCADE），Phase 4 若有其他 ORM 级联需求需重新评估。详见 `app/services/research_service.py:450-461`。

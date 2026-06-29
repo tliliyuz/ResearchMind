@@ -1,6 +1,7 @@
 """Working Memory —— 单次任务内的 ReAct Trace。
 
-Phase 1 仅内存存储，最终随 execution_context.agent_context 序列化到 DB。
+Phase 3 起 ReAct Trace 持久化到 agent_memory_entries 表；
+execution_context 不再保存 working_memory 完整 JSON。
 """
 
 from __future__ import annotations
@@ -57,17 +58,31 @@ class ReActEntry:
 
 
 class WorkingMemory:
-    """内存级 ReAct Trace，限制最大条目数。"""
+    """内存级 ReAct Trace，限制最大条目数。
+
+    Phase 3 新增 _pending_persist 队列：自上次持久化以来新增的记录，
+    由 AgentRuntime 在事务边界统一 flush 到 DB。
+    """
 
     def __init__(self, max_entries: int = 20):
         self._max_entries = max(max_entries, 1)
         self._entries: list[ReActEntry] = []
+        self._pending_persist: list[ReActEntry] = []
 
     def add(self, entry: ReActEntry) -> None:
         """添加一条记录；超过上限时丢弃最旧条目。"""
         self._entries.append(entry)
+        self._pending_persist.append(entry)
         if len(self._entries) > self._max_entries:
             self._entries = self._entries[-self._max_entries :]
+
+    def pending_entries(self) -> list[ReActEntry]:
+        """返回自上次持久化以来新增的记录副本。"""
+        return list(self._pending_persist)
+
+    def mark_persisted(self) -> None:
+        """清空待持久化队列。"""
+        self._pending_persist = []
 
     def recent(self, n: int | None = None) -> list[ReActEntry]:
         """返回最近 n 条记录。"""
@@ -101,14 +116,18 @@ class WorkingMemory:
 
     @classmethod
     def from_dict_list(cls, items: list[dict[str, Any]] | None, max_entries: int = 20) -> "WorkingMemory":
-        """从 dict 列表重建 WorkingMemory。"""
+        """从 dict 列表重建 WorkingMemory（已持久化数据，不进入 pending 队列）。"""
         memory = cls(max_entries=max_entries)
         if not items:
             return memory
         valid_items = [item for item in items if isinstance(item, dict)]
         for item in valid_items[-max_entries:]:
             try:
-                memory.add(ReActEntry.from_dict(item))
+                # 直接写入 _entries，避免旧 JSON 数据被再次标记为待持久化
+                memory._entries.append(ReActEntry.from_dict(item))
             except Exception:
                 continue
+        # 控制上限
+        if len(memory._entries) > memory._max_entries:
+            memory._entries = memory._entries[-memory._max_entries :]
         return memory

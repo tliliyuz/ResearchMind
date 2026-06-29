@@ -31,43 +31,51 @@ def tool_context():
 
 
 class TestMemoryTool:
-    async def test_write_追加条目(self, tool_context):
+    async def test_write_返回包含memory_note的output(self, tool_context):
         tool = MemoryTool()
         result = await tool.execute(tool_context, operation="write", content="note A")
 
         assert result.success is True
-        entries = tool_context.working_memory.recent()
-        assert len(entries) == 1
-        assert entries[0].tool_output_summary["memory_note"] == "note A"
-        assert entries[0].phase == "search"
-        assert entries[0].iteration == 3
+        # Phase 3 修正：memory_tool 不再自行写入 WorkingMemory，条目由 AgentLoop 统一记录
+        assert tool_context.working_memory.recent() == []
+        assert result.output["operation"] == "write"
+        assert result.output["memory_note"] == "note A"
+        assert result.output["entries_count"] == 0
 
     async def test_append_与write等价追加(self, tool_context):
         tool = MemoryTool()
-        await tool.execute(tool_context, operation="write", content="note A")
-        result = await tool.execute(tool_context, operation="append", content="note B")
+        result_a = await tool.execute(tool_context, operation="write", content="note A")
+        result_b = await tool.execute(tool_context, operation="append", content="note B")
 
-        assert result.success is True
-        entries = tool_context.working_memory.recent()
-        assert len(entries) == 2
-        assert entries[-1].tool_output_summary["memory_note"] == "note B"
+        assert result_a.success is True
+        assert result_b.success is True
+        assert result_a.output["memory_note"] == "note A"
+        assert result_b.output["memory_note"] == "note B"
+        assert tool_context.working_memory.recent() == []
 
     async def test_read_返回最近条目摘要(self, tool_context):
         tool = MemoryTool()
-        await tool.execute(tool_context, operation="write", content="note A")
-        await tool.execute(tool_context, operation="write", content="note B")
+        tool_context.working_memory.add(ReActEntry(
+            iteration=1, phase="planning", tool_name="plan_tool", observation="plan done",
+        ))
+        tool_context.working_memory.add(ReActEntry(
+            iteration=2, phase="search", tool_name="search_tool", observation="search done",
+        ))
 
         result = await tool.execute(tool_context, operation="read", limit=1)
 
         assert result.success is True
         assert result.output["entries_count"] == 1
-        assert "note B" in result.observation
-        assert "note A" not in result.observation
+        assert "最近 1 条" in result.observation
+        assert "最近 phase=search" in result.observation
+        assert "plan done" not in result.observation
 
     async def test_read_默认limit5(self, tool_context):
         tool = MemoryTool()
         for i in range(6):
-            await tool.execute(tool_context, operation="write", content=f"note {i}")
+            tool_context.working_memory.add(ReActEntry(
+                iteration=i + 1, phase="search", tool_name="search_tool",
+            ))
 
         result = await tool.execute(tool_context, operation="read")
 
