@@ -313,7 +313,7 @@ body {
 
 ### 3.2 侧边栏（深色）
 
-ResearchMind 侧边栏为深色背景（slate-900），与 DocMind 浅色侧边栏方案不同。
+ResearchMind 采用暗色侧边栏主题，深色背景（slate-900）。
 
 ```css
 .sidebar {

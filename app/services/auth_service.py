@@ -7,7 +7,7 @@
 - logout()：吊销当前 refresh_token
 - change_password()：改密后全量吊销
 
-复用策略：从 DocMind 直接复制核心逻辑，微调导入路径与异常类名（E5xxx→E1xxx）。
+异常类名与导入路径按 ResearchMind 调整，错误码体系为 E1xxx。
 """
 
 import logging

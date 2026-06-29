@@ -4,8 +4,6 @@
 - 用法：const { chartRef, setOption } = useECharts()
 - 模板中 <div ref="chartRef" class="chart-container" />
 - setOption(option)
-
-来源：DocMind `frontend/src/composables/useECharts.js`，直接复制，零改动。
 */
 
 import { ref, onMounted, onUnmounted } from 'vue'

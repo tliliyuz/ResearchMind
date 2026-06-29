@@ -25,7 +25,7 @@
 
 > **`code` 字段类型约定**：`code` 字段**统一为字符串类型**。成功时 `"0"`，错误时 `"E2001"` 等错误码字符串。前端解析时勿作整数类型判断。
 >
-> **[Deviation]** ResearchMind 的 `detail` 为**结构化 JSON 对象**（`error_type` + `error_description` + 可选 `recoverable`/`retry_after_ms`），与 docmind 基类 `AppException.detail: str`（扁平字符串）不同。实现时需扩展 `AppException` 构造函数，支持 `detail: dict | str` 并据此序列化响应。
+> **[Deviation]** ResearchMind 的 `detail` 为**结构化 JSON 对象**（`error_type` + `error_description` + 可选 `recoverable`/`retry_after_ms`），区别于扁平字符串形式。实现时需扩展 `AppException` 构造函数，支持 `detail: dict | str` 并据此序列化响应。
 
 **成功响应：**
 
@@ -75,7 +75,7 @@
 
 #### 认证与权限错误（E1xxx）
 
-> **[Deviation]** 认证错误码段从 docmind 的 E5xxx（E5001-E5010）重新编号为 E1xxx（E1001-E1011）。`PasswordSameAsCurrentException` 从 E7004 移入 E1011。错误码语义与 HTTP 状态码保持一致，编号规则为 ResearchMind 自行设计。
+> **[Deviation]** 认证错误码段采用 E1xxx（E1001-E1011）编号。`PasswordSameAsCurrentException` 归入 E1011。错误码语义与 HTTP 状态码保持一致，编号规则为 ResearchMind 自行设计。
 
 | 错误码 | HTTP 状态码 | 说明 |
 |:---|:---|:---|
@@ -124,6 +124,7 @@
 | E3110 | 401 | LLM 认证失败（重试无意义） |
 | E3111 | 500 | LLM 调用返回未预期错误 |
 | E3112 | 500 | Celery Worker 崩溃/丢失（可断点续跑） |
+| E3113 | 500 | Worker 未拾取任务（可断点续跑） |
 | E3999 | 500 | 未预期的内部错误（Worker 兜底） |
 
 #### 系统通用错误（E9xxx）
@@ -1053,6 +1054,7 @@ Pipeline 各阶段失败。`recoverable` 决定是否可断点续跑，`retry_af
 | E3110 | 401 | `LLMAuthFailed` | false | — | LLM 认证失败（重试无意义） |
 | E3111 | 500 | `LLMUnknownError` | true | 3 | LLM 调用返回未预期错误 |
 | E3112 | 500 | `CeleryWorkerLost` | true | — | Celery Worker 崩溃/丢失（DB checkpoint 完整，可从 `execution_context` 断点续跑） |
+| E3113 | 500 | `CeleryWorkerNotPickedUp` | true | — | Worker 未在时限内拾取任务（可断点续跑） |
 | E3999 | 500 | `UnknownInternal` | false | — | 未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底） |
 
 **`recoverable` 字段语义：**

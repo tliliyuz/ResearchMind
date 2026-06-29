@@ -97,6 +97,7 @@ ResearchMind/
 │   │   ├── cost_tracker.py         # Token 用量与成本追踪（中英文自适应算法）
 │   │   ├── redis_client.py         # Redis 客户端（Celery broker + result backend）
 │   │   ├── logging_config.py       # 日志配置
+│   │   ├── trace_recorder.py       # Trace 记录器（Token/Cost 追踪、断点续跑 trace 合并）
 │   │   └── utils.py                # 共享工具函数
 │   │
 │   ├── pipeline/                   # Pipeline 各阶段实现
@@ -112,7 +113,8 @@ ResearchMind/
 │   ├── tasks/                      # Celery 任务定义
 │   │   ├── __init__.py
 │   │   ├── celery_app.py           # Celery 配置（DB/Redis 集成）
-│   │   └── research_task.py        # 研究任务异步执行（Worker 入口）
+│   │   ├── research_task.py        # 研究任务异步执行（Worker 入口）
+│   │   └── recovery.py             # Worker 崩溃恢复（扫描过时 running 任务并重新投递）
 │   │
 │   └── middleware/                 # 中间件
 │       ├── __init__.py
@@ -294,6 +296,17 @@ REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
 CELERY_RESULT_BACKEND=redis://localhost:6379/2
 
+# ── Worker 崩溃恢复 ──
+CELERY_TASK_LOCK_TTL=20          # 任务级锁 TTL（租约模式），崩溃后旧锁自动过期
+CELERY_LOCK_REFRESH_INTERVAL=10  # 任务级锁刷新间隔，必须显著小于 TTL
+WORKER_TIMEOUT_SECONDS=10        # 锁缺失持续该时长后标记任务 failed
+PENDING_TASK_TIMEOUT_SECONDS=30  # pending 任务超时（未被 Worker 拾取则标记 failed）
+WORKER_TIMEOUT_CHECK_INTERVAL=5  # 超时监察者扫描间隔
+WORKER_TIMEOUT_GRACE_SECONDS=5   # 启动宽限期（started_at 在该时间内即使锁缺失也不标记失败）
+STALE_TASK_RECOVERY_SECONDS=60   # 启动恢复阈值：running 任务超过该时间无活跃心跳则重新投递
+STARTUP_RECOVERY_ENABLED=True    # 启动时是否自动恢复过时 running 任务
+CELERY_VISIBILITY_TIMEOUT=1800   # Redis broker visibility_timeout
+
 # ── LLM (DeepSeek) ──
 LLM_API_KEY=<your-deepseek-api-key>
 LLM_MODEL=deepseek-v4-pro          # MVP 单一模型
@@ -383,7 +396,7 @@ def database_url(self) -> str:
 | 层级 | 机制 |
 |:---|:---|
 | MySQL | 连接建立钩子 `SET time_zone='+00:00'` + 服务器 `default_time_zone='+00:00'` |
-| 后端 (ORM) | `UTCDateTime` TypeDecorator（`app/models/_types.py`，复制自 docmind）——写入转 UTC 剥离 tzinfo 存 naive、读取附 UTC tzinfo 返回 aware；默认值 `func.current_timestamp()`，`updated_at` 由 ORM `onupdate` 维护 |
+| 后端 (ORM) | `UTCDateTime` TypeDecorator（`app/models/_types.py`）——写入转 UTC 剥离 tzinfo 存 naive、读取附 UTC tzinfo 返回 aware；默认值 `func.current_timestamp()`，`updated_at` 由 ORM `onupdate` 维护 |
 | API | Pydantic 将 aware datetime 序列化为 ISO 8601 `+00:00` |
 | 前端 | `new Date(isoString)` 自动转换为本地时区显示 |
 

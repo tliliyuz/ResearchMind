@@ -1,7 +1,7 @@
 """系统级可靠性评估
 
 计算 Task Completion Rate 与 LLM Call Success Rate，均为跨任务聚合指标。
-指标定义见 docs/TESTING_STRATEGY.md §11.3。
+指标定义见 tests/TESTING_STRATEGY.md §11.3。
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession

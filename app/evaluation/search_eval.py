@@ -1,7 +1,7 @@
 """Search 阶段离线评估
 
 从 Search Step 的 output 中提取 sub_question_results，计算 Coverage Rate 与 Recall@K。
-指标定义见 docs/TESTING_STRATEGY.md §11.2.1。
+指标定义见 tests/TESTING_STRATEGY.md §11.2.1。
 """
 
 from app.evaluation.constants import SEARCH_RECALL_K

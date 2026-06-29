@@ -9,7 +9,7 @@
 - 句级修辞过滤：在 BM25 定位前过滤引用性句子（示例/测试/历史记录等），
   解决段落内部混合陈述句和引用句的污染问题
 
-来源：DocMind `backend/app/rag/sentence_matcher.py`，适配 ResearchMind 自有类型。
+适配 ResearchMind 自有类型。
 """
 
 import logging

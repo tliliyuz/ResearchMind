@@ -6,7 +6,7 @@
 - v1.0 MVP：第一层引用存在性检查（正则提取 [来源N] 填充 section.sources[]）
 - v1.5 完整版：三层审计（引用存在性 → 来源一致性 → 句级证据回溯）
 
-来源：DocMind `backend/app/rag/evidence_auditor.py`，适配 ResearchMind 自有类型。
+适配 ResearchMind 自有类型。
 """
 
 import logging

@@ -1,7 +1,5 @@
 """Token 估算 — 中英文自适应算法
 
-从 DocMind `app/rag/chunker.py` → `estimate_tokens()` 直接复制，零改动。
-
 算法：
 - 统计中文字符占比（Unicode 范围 一..鿿）
 - 中文 > 30% → 1 token ≈ 1.5 字符

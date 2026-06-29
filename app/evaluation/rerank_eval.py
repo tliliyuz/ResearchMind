@@ -1,7 +1,7 @@
 """Rerank 阶段离线评估
 
 从 EvidenceItem 的 relevance_score 计算均值、中位数、分布与高质量占比。
-指标定义见 docs/TESTING_STRATEGY.md §11.2.3。
+指标定义见 tests/TESTING_STRATEGY.md §11.2.3。
 """
 
 from collections import Counter

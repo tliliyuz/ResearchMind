@@ -2,7 +2,7 @@
 
 [Deviation] ResearchMind 的 `detail` 为结构化 JSON 对象
 （`error_type` + `error_description` + 可选 `recoverable`/`retry_after_ms`），
-与 docmind 基类 `AppException.detail: str`（扁平字符串）不同。
+而非扁平字符串。
 """
 
 import json

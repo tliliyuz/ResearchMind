@@ -5,7 +5,7 @@
 - 单路为空时仅返回另一路结果
 - 支持多路检索结果融合（v1.5 SearXNG + Tavily 双路搜索）
 
-来源：DocMind `backend/app/rag/fusion.py`，适配 ResearchMind 自有类型 SearchResult/SearchOutput。
+适配 ResearchMind 自有类型 SearchResult/SearchOutput。
 """
 
 import logging

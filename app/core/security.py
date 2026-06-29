@@ -3,7 +3,7 @@
 对齐 ARCHITECTURE.md §4 权限模型：
 - access_token：15min 短有效期，用于 API 认证
 - refresh_token：7 天长有效期，JWT 格式（含 type='refresh'），SHA-256 哈希存 MySQL
-- 从 DocMind 直接复制核心逻辑，微调用户表字段映射
+- 用户表字段映射按 ResearchMind 表结构调整
 """
 
 import hashlib

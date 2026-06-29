@@ -179,7 +179,7 @@ class SystemReliabilityMetrics:
     """系统级可靠性指标
 
     跨任务聚合，不依赖单个任务的 Pipeline 产出。
-    指标定义见 docs/TESTING_STRATEGY.md §11.3。
+    指标定义见 tests/TESTING_STRATEGY.md §11.3。
     """
 
     # Task Completion Rate

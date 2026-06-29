@@ -5,7 +5,7 @@
 - 流式 chat/completions 用于需要流式输出的场景（Render）
 - 非流式 chat/completions 用于需要全量结果的场景（Planning / Synthesis）
 
-[Deviation] 相比 docmind 的 llm.py：
+[Deviation] ResearchMind LLM 增强：
 - 新增重试逻辑：timeout（3次）/ rate_limit（3次指数退避）/ auth_error（不重试）
 - 非流式调用默认模型改为 LLM_FLASH_MODEL（deepseek-v4-flash），区别于流式的 LLM_MODEL（deepseek-v4-pro）
 """

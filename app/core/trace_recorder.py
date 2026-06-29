@@ -1,7 +1,7 @@
 """Trace 数据收集器 — 轻量级，各阶段收集数据，finish() 一次性写入
 
 对齐 RESEARCH_PIPELINE.md §11 成本追踪：
-- 从 DocMind 复制类结构（per-stage 计时 + JSON 字段 + context manager 模式）
+- 类结构：per-stage 计时 + JSON 字段 + context manager 模式
 - 改阶段名称为 Pipeline 七阶段：
   Planning → Search → Fetch → Rerank → Synthesis → EvidenceGraph → Render
 - MVP 不单独建 traces 表：trace 数据写入 research_tasks.trace JSON 列

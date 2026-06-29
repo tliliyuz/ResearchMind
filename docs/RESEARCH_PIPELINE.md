@@ -380,7 +380,7 @@ Evidence[] (top-K, K = min(max_sources, 候选数))
 ```
 
 > **实现模块**：
-> - `app/pipeline/reranker.py`（待改造）：`BaseReranker` ABC 抽象基类 + Claude Rerank 实现。ABC 定义 `rerank(query, candidates, top_k)` 方法签名。v1.0 使用 LLM Rerank（Claude API Prompt 内打分），v1.5 可替换为专用 Rerank API 实现。来源：DocMind `backend/app/rag/reranker.py` 的 ABC 模式。
+> - `app/pipeline/reranker.py`（待改造）：`BaseReranker` ABC 抽象基类 + Claude Rerank 实现。ABC 定义 `rerank(query, candidates, top_k)` 方法签名。v1.0 使用 LLM Rerank（Claude API Prompt 内打分），v1.5 可替换为专用 Rerank API 实现。
 
 ### 5.2a 数据来源
 
@@ -393,7 +393,7 @@ WHERE task_id = ? AND fetch_status = 'success';
 ```
 
 每行映射为一个 `FetchedDoc`，其中 `id` 对应 `source_id`，用于后续 Evidence Graph 的 `[来源N]` 引用。该设计保证 Retry 时正文可复用，且断点续跑无需重新抓取。
-> - `app/pipeline/fusion.py`：RRF 多路融合排序（`rrf_fusion()`），v1.5 引入 SearXNG 作为降级后端后用于 Tavily + SearXNG 双路结果融合。算法 `score = Σ 1/(60 + rank_i)`。**v1.0 代码已就位，不激活**。来源：DocMind `backend/app/rag/fusion.py`，适配 ResearchMind 自有 SearchResult/SearchOutput 类型。
+> - `app/pipeline/fusion.py`：RRF 多路融合排序（`rrf_fusion()`），v1.5 引入 SearXNG 作为降级后端后用于 Tavily + SearXNG 双路结果融合。算法 `score = Σ 1/(60 + rank_i)`。**v1.0 代码已就位，不激活**。适配 ResearchMind 自有 SearchResult/SearchOutput 类型。
 
 ### 5.3 Stage 1：BM25 粗筛
 
@@ -406,7 +406,7 @@ WHERE task_id = ? AND fetch_status = 'success';
 
 > **为什么 Stage 1 不用纯向量检索？** 向量检索依赖 Embedding 模型质量，且额外增加 API 调用延迟。BM25 是纯本地计算（jieba 分词 + NumPy 矩阵），对 15 篇文档的段落级评分在 50ms 内完成，零 API 成本。
 >
-> **v1.5 句级匹配**：`app/pipeline/sentence_matcher.py` 提供句级 BM25 定位 + 修辞角色过滤（`match_sentences()` / `filter_chunk_sentences()`），在段落内部定位最佳证据句并过滤引用性句子（示例/测试/TODO 等）。**v1.0 代码已就位，v1.5 激活**。来源：DocMind `backend/app/rag/sentence_matcher.py`，适配 ResearchMind 自有类型。
+> **v1.5 句级匹配**：`app/pipeline/sentence_matcher.py` 提供句级 BM25 定位 + 修辞角色过滤（`match_sentences()` / `filter_chunk_sentences()`），在段落内部定位最佳证据句并过滤引用性句子（示例/测试/TODO 等）。**v1.0 代码已就位，v1.5 激活**。适配 ResearchMind 自有类型。
 
 ### 5.4 Stage 2：LLM Rerank
 
@@ -539,7 +539,7 @@ Evidence 按 relevance_score 降序排列
 单条 Evidence 内容截断至 1500 字符（LLM context 窗口有限）
 ```
 
-> **Token 预算控制**：各阶段内部自行实现 Token 预算截断（如 Rerank 的 `_build_rerank_prompt()` 中的逐步截断逻辑），确保每阶段传入 LLM 的内容不超过 Token 预算。System Prompt 模板需替换为本文档各节定义的 Prompt。单条 Evidence 截断至 1500 字符是 ResearchMind 自行实现的策略（DocMind 无此功能）。ResearchMind 无独立 prompt_builder 模块，各阶段 Prompt 构建逻辑内聚在对应阶段文件中。
+> **Token 预算控制**：各阶段内部自行实现 Token 预算截断（如 Rerank 的 `_build_rerank_prompt()` 中的逐步截断逻辑），确保每阶段传入 LLM 的内容不超过 Token 预算。System Prompt 模板需替换为本文档各节定义的 Prompt。单条 Evidence 截断至 1500 字符是 ResearchMind 自有实现策略。ResearchMind 无独立 prompt_builder 模块，各阶段 Prompt 构建逻辑内聚在对应阶段文件中。
 
 ### 6.4 参数
 
@@ -806,7 +806,7 @@ Report Render 输出
 5. 组装最终 Report JSON（含 Evidence Graph + Trace）
 ```
 
-> **引用审计**：`app/core/evidence_auditor.py` 提供程序级三层证据审计（`audit_evidence()`）：第一层引用存在性检查（正则提取 `[来源N]` 并验证是否缺失引用）；第二层来源一致性检查（引用来源是否集中在可信源）；第三层句级证据回溯（逐句验证事实性断言能否在来源中找到原文支撑）。v1.0 MVP 使用第一层；v1.5 启用全部三层。来源：DocMind `backend/app/rag/evidence_auditor.py`，适配 ResearchMind 自有 SearchResult 类型。
+> **引用审计**：`app/core/evidence_auditor.py` 提供程序级三层证据审计（`audit_evidence()`）：第一层引用存在性检查（正则提取 `[来源N]` 并验证是否缺失引用）；第二层来源一致性检查（引用来源是否集中在可信源）；第三层句级证据回溯（逐句验证事实性断言能否在来源中找到原文支撑）。v1.0 MVP 使用第一层；v1.5 启用全部三层。适配 ResearchMind 自有 SearchResult 类型。
 
 ### 8.9 状态转换
 
@@ -910,6 +910,17 @@ Step 失败
                           └── recoverable 由失败类型决定
 ```
 
+#### Worker 崩溃相关错误
+
+除阶段内 Step 失败外，以下错误在 Worker 级别产生，由基础设施层（超时监察者 / 任务调度器）检测并标记：
+
+| 错误码 | 名称 | 触发条件 | `recoverable` | 说明 |
+|:---|:---|:---|:---|:---|
+| **E3112** | `CeleryWorkerLost` | Worker 崩溃/丢失，超时监察者检测到任务级锁（`rm:task_lock:{task_id}`）缺失超过阈值后标记 | `true` | Worker 进程意外终止（OOM Kill、节点宕机、Celery worker 重启等），任务级锁因未正常释放而被监察者判定为丢失。恢复路径：调度器将任务重新入队，新 Worker 通过 §10.5 崩溃恢复流程接续执行。 |
+| **E3113** | `CeleryWorkerNotPickedUp` | Worker 未在时限内拾取任务，`pending` 超时后标记 | `true` | 任务已进入 `research_tasks` 表并处于 `pending` 状态，但在配置的等待窗口内无 Worker 拾取（所有 Worker 满载、队列积压、Worker 全部下线等）。恢复路径：调度器重新投递任务消息至 Celery 队列。 |
+
+> **E3112 vs 阶段内致命错误的区别**：阶段内致命错误（E3101–E3107）由 Pipeline 逻辑检测到，意味着「该阶段的输入或执行存在不可恢复的问题」。E3112/E3113 由基础设施层检测到，意味着「执行环境本身出了问题，但任务数据完好」。因此 E3112/E3113 始终 `recoverable=true`——重新调度即可恢复，无需修复上游数据。
+
 ### 10.2 TaskStateResolver
 
 > TaskStateResolver 在所有 Step 终态后触发，按 FATAL failure > all completed > partial with threshold 规则推导 Task 最终状态。完整评估算法与 `min_evidence` 计算见 [ARCHITECTURE.md §3.7](ARCHITECTURE.md#37-taskstateresolver)。
@@ -977,6 +988,81 @@ Celery 任务入口（`app/tasks/research_task.py`）在拾取任务后查询 ta
 
 > 任务锁实现见 `app/tasks/lock.py`（`acquire_task_lock_async` / `release_task_lock_async`）。启动时过时任务恢复见 `app/main.py` `lifespan()`。
 
+#### 10.5.5 Trace Snapshot — 中间持久化
+
+`PipelineOrchestrator.run()` 在每个 Phase 完成后、checkpoint commit 前，调用 `self._trace.snapshot()` 将当前 trace 中间快照写入 `self._task.trace`。这确保崩溃恢复时 `previous_trace` 包含崩溃前所有已完成阶段的完整数据（`total_tokens`、`total_cost_usd`、各阶段 `breakdown`）。
+
+```
+Phase N 完成
+    │
+    ├── self._trace.record(phase, cost_info)    # 记录本阶段 token/成本
+    │
+    ├── self._trace.snapshot()                   # 将当前聚合 trace 写入 task.trace
+    │       └── task.trace = {
+    │               "total_tokens": ...,
+    │               "total_cost_usd": ...,
+    │               "breakdown": { phase_1: ..., ..., phase_N: ... }
+    │           }
+    │
+    └── checkpoint commit（phase + last_completed_step_id）
+```
+
+关键性质：
+
+| 性质 | 说明 |
+|:---|:---|
+| **无副作用** | `TraceRecorder.snapshot()` 仅读取当前内部状态并写入 `task.trace`，不修改 trace 内部计数器、不推进阶段指针，可多次安全调用 |
+| **幂等性** | 同一 Phase 完成后多次调用 `snapshot()`，`task.trace` 内容一致（同一阶段的 breakdown 条目不会重复） |
+| **崩溃安全** | 若 Worker 在 Phase N 完成后、`snapshot()` 调用前崩溃，该阶段的 trace 数据丢失但可通过 `_build_trace_from_steps()` 重建（见 §10.5.6） |
+
+> **为什么不等到任务完成才写入 trace？** 如果 trace 仅在 `_finalize_task()` 时一次性写入，崩溃恢复后 `task.trace` 为空——新 Worker 无法知道崩溃前各阶段消耗了多少 token 和成本。中间持久化让恢复后的 Worker 能准确延续成本追踪，避免总成本统计缺失。
+
+#### 10.5.6 `_build_trace_from_steps()` — Trace 重建
+
+当 `task.trace` 为空（旧任务在首个 checkpoint 前崩溃，或 §10.5.5 中 `snapshot()` 未及调用即崩溃），`_build_trace_from_steps()` 从 `research_steps` 表的已完成/跳过记录中重建 minimal trace dict。
+
+重建逻辑：
+
+```
+SELECT phase, status, cost
+FROM research_steps
+WHERE task_id = ? AND status IN ('completed', 'skipped')
+```
+
+对查询结果按 Phase 分组，提取各 Phase 的：
+
+| 字段 | 来源 | 说明 |
+|:---|:---|:---|
+| `duration_ms` | `step.cost.duration_ms` | 阶段执行耗时 |
+| `input_tokens` | `step.cost.input_tokens` | 输入 token 数 |
+| `output_tokens` | `step.cost.output_tokens` | 输出 token 数 |
+| `model` | `step.cost.model` | 使用的模型名称 |
+| `cost_usd` | `step.cost.estimated_cost_usd` | 估算成本（USD） |
+
+**同一 Phase 多条记录时的去重策略**：崩溃恢复可能产生同一 Phase 的多条 `research_steps` 记录（旧 Step 状态为 `running` 未清理，新 Step 重新执行后状态为 `completed`）。此时保留 `duration_ms` 最长的一条记录——最长耗时记录最可能对应实际成功完成的执行，短耗时记录通常是崩溃中断的不完整执行。
+
+重建产出 minimal trace dict 格式：
+
+```python
+{
+    "total_tokens": <sum of input_tokens + output_tokens across phases>,
+    "total_cost_usd": <sum of cost_usd across phases>,
+    "breakdown": {
+        "<phase_name>": {
+            "tokens": <input_tokens + output_tokens>,
+            "cost": <cost_usd>,
+            "duration_ms": <duration_ms>,
+            "model": "<model>",
+        },
+        ...
+    }
+}
+```
+
+重建的 trace 可被 `TraceRecorder._preload_previous_phases()` 使用——恢复后的 Worker 将重建的 breakdown 注入 `TraceRecorder` 内部状态，后续 Phase 的 `snapshot()` 和最终 `_finalize_task()` 在已有数据基础上继续聚合，保证 `task.trace` 的完整性和连续性。
+
+> **重建 trace vs 完整 trace 的差异**：重建 trace 缺少 `snapshot()` 提供的实时聚合精度（如中间时间点的 `total_tokens` 快照），但各 Phase 的 token/cost 数据完整。对于崩溃恢复场景，这一精度损失可接受——恢复后新 Worker 从下一个 Phase 开始，`snapshot()` 会逐步补全聚合数据。
+
 ---
 
 ## 11. 成本追踪与 Token 预算
@@ -987,7 +1073,7 @@ Celery 任务入口（`app/tasks/research_task.py`）在拾取任务后查询 ta
 
 ### 11.2 成本追踪数据结构
 
-> **[Deviation]** ResearchMind 的 trace 为**成本+计时双模型**：每 Step 级 `cost`（token 成本细分 `{input_tokens, output_tokens, estimated_cost_usd, model}`）和 Task 级 `trace`（聚合 `total_tokens`/`total_cost_usd` + 按阶段 `breakdown`）。DocMind 的 `TraceRecorder` 为纯计时模型（`duration_ms` + `span_name` + `status`），不含成本字段。ResearchMind 在 docmind 基础上扩展了成本维度。
+> **[Deviation]** ResearchMind 的 trace 为**成本+计时双模型**：每 Step 级 `cost`（token 成本细分 `{input_tokens, output_tokens, estimated_cost_usd, model}`）和 Task 级 `trace`（聚合 `total_tokens`/`total_cost_usd` + 按阶段 `breakdown`）。区别于纯计时模型（仅 `duration_ms` + `span_name` + `status`、不含成本字段），ResearchMind 在计时基础上扩展了成本维度。
 
 每 Step 完成后写入 `research_steps`：
 

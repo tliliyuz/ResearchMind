@@ -1,7 +1,7 @@
 """离线 Pipeline 评估模块
 
 提供 Search / Fetch / Rerank 三阶段的量化指标计算，以及单任务/多任务的
-评估报告聚合。指标定义与目标值见 docs/TESTING_STRATEGY.md §11。
+评估报告聚合。指标定义与目标值见 tests/TESTING_STRATEGY.md §11。
 """
 
 from app.evaluation.aggregator import evaluate_task, aggregate_reports

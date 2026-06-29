@@ -8,7 +8,7 @@
  * - 指数退避重连（1s/2s/4s，最多 3 次）
  * - 手动关闭（abortController.abort + reader.cancel）
  *
- * 来源：DocMind SSE 解析框架 + ResearchMind 替换全部事件处理器。
+ * ResearchMind 基于 SSE 解析框架，替换全部事件处理器。
  * 对齐 FRONTEND.md §8 + API.md §4。
  */
 

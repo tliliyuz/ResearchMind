@@ -4,7 +4,7 @@
 - require_task_accessible：资源归属检查（owner 或 admin 可通过）
 - require_admin：系统角色检查（仅 admin 可通过）
 
-从 DocMind 复制两层分离模式，替换为 Task 级权限检查逻辑。
+采用两层分离模式，Task 级权限检查逻辑。
 所有函数操作已加载的模型对象，不触发额外 DB 查询。
 """
 

@@ -1,7 +1,6 @@
 /**
  * 通用格式化工具函数
  *
- * 来源：DocMind `frontend/src/utils/format.js`，直接复制。
  * ResearchMind 新增：formatNumber() / formatDuration()。
  */
 

@@ -7,7 +7,7 @@
  * - 一键复制支持（通过 wrapCodeBlocks 辅助函数）
  * - [来源N] 引用锚点解析（ResearchMind 新增，对齐 FRONTEND.md §4.5.3）
  *
- * 来源：DocMind `frontend/src/utils/markdown.js`，ResearchMind 扩展引用锚点 plugin。
+ * ResearchMind 扩展引用锚点 plugin。
  */
 
 import MarkdownIt from 'markdown-it'

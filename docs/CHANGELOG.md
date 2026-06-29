@@ -10,20 +10,59 @@
 
 ## [Unreleased]
 
-### Added
-- **Celery Worker 崩溃自动恢复机制**待实现：解决 Worker 被 SIGKILL/OOM/断电杀死后任务永久卡在 `running` 的死锁问题。包含：
-  - `_run_pipeline()` 三元状态检查（`pending`→正常执行 / `running`→崩溃恢复 / 终态→跳过），修复二元检查导致的跳过执行问题
-  - `_start_task()` 新增 `running` 状态预检与崩溃恢复路径（不重复 CAS、不重复 SSE、获取任务级锁）
-  - 任务级幂等锁（`rm:task_lock:{task_id}`，TTL=900s），防止多 Worker 并发恢复同一任务
-  - `run()` 中 `try/finally` 确保所有退出路径释放任务锁
-  - FastAPI `lifespan()` 启动时过时任务自动检测与 re-queue（阈值 1800s = 2× `task_time_limit`）
-  - `GET /api/health/workers` 运维端点（Celery `control.ping()` 返回活跃 Worker 列表）
-  - 新增 `CeleryWorkerLostException`（E3112，`recoverable=true`）
-  - 新增配置项 `STALE_TASK_RECOVERY_SECONDS`（1800s）、`STARTUP_RECOVERY_ENABLED`（True）
+### Changed
+- **文档目录重构与路径同步**：设计文档按资源类型重新归集，`docs/API.md`、`docs/PRD.md`、`docs/ROADMAP.md`、`docs/DEVELOPMENT.md` 移至 `resource/docs/`，`docs/TESTING_STRATEGY.md` 移至 `tests/TESTING_STRATEGY.md`。同步更新了 `README.md`、`CLAUDE.md`、`docs/CHANGELOG.md`、`resource/docs/ROADMAP.md`、`resource/docs/PRD.md`、`frontend/docs/FRONTEND.md` 以及 `app/evaluation/` 模块中的全部交叉引用路径，确保链接可点击、文档归属矩阵与当前目录一致。
+- **新增产品原型图引用**：在 `README.md` 与 `resource/docs/PRD.md` 中新增 `resource/prototypes/` 下 6 张原型图（登录页、研究创建页、运行态、历史列表页、报告页）的引用与说明，作为页面布局与交互流程的可视化参考。
 
 ### Fixed
+- **断点续跑后 Worker 未恢复时 task 永久卡在 `pending`**（两阶段修复）：
+  - **Phase 1**：`_start_task()` 正常路径尽力获取锁（含强制释放残留锁）后，无论锁结果都 CAS `pending→running` 并 commit。若锁获取失败，task 进入 `running` 但无锁，由超时监察者 `_check_worker_timeouts` 扫描 `running` 任务时检测锁缺失，在 `WORKER_TIMEOUT_SECONDS` 后标记 `failed`（E3112，可恢复）。
+  - **Phase 2**（本次）：修复 Worker 完全未启动时 task 创建后卡在 `pending` 的缺陷。根因：`_start_task()` 在 Celery Worker 内部执行——若 Worker 未启动则永远不会被调用，task 永远留在 `pending`，而超时监察者仅扫描 `running` 任务。修复方案：① `create_task()` / `retry_task()` 设置 `started_at=now` 记录派发时间；② `_check_worker_timeouts()` 新增 `pending` 任务扫描——`started_at` 超过 `PENDING_TASK_TIMEOUT_SECONDS`（30s）仍为 `pending` 则 CAS 标记 `failed`（E3113，`recoverable=true`）；③ 新增 `CeleryWorkerNotPickedUpException`（E3113）。
+
+### Added
+- **Pipeline 断点续跑端到端集成测试补齐**：新增 `tests/integration/test_pipeline_retry.py`（13 用例）+ 辅助模块 `tests/integration/_retry_helpers.py`，覆盖 Retry API → Service 状态重置 → Orchestrator 调度 → Step 三层复用 → DB 状态 → SSE 事件序列 → Trace 连续性。对应 `ROADMAP.md §5.5` 的 ⏳ 项已标记为 ✅。
+- **基础设施加固激活（§5.2）**：结构化日志 + Request ID 中间件 + 限流中间件正式挂载到 `main.py`。包含：
+  - `setup_logging(debug=settings.DEBUG)` 在应用启动时调用，非 debug 模式输出 JSON 格式日志（含 request_id / user_id / timestamp / exception），debug 模式输出人类可读格式
+  - `RequestIDMiddleware` 挂载（CORS → RequestID → Auth → RateLimit 顺序），为每个请求生成/透传 `X-Request-ID`，写入 contextvars 供日志链路追踪
+  - `RateLimitMiddleware` 挂载（`RATE_LIMIT_ENABLED=False` 默认关闭），Redis 固定窗口计数器 + Lua 原子脚本 + Redis 不可用时降级放行
+  - 新增单元测试：`test_logging_config.py`（18 用例）+ `test_rate_limit.py`（13 用例）
+- **Celery Worker 崩溃自动恢复机制**：解决 Worker 被 SIGKILL/OOM/断电杀死后任务永久卡在 `running` 的死锁问题。包含：
+  - `_run_pipeline()` 三元状态检查（`pending`→正常执行 / `running`→崩溃恢复 / 终态→跳过），修复二元检查导致的跳过执行问题
+  - `_start_task()` 新增 `running` 状态预检与崩溃恢复路径（不重复 CAS、不重复 SSE、获取任务级锁）
+  - 任务级幂等锁（`rm:task_lock:{task_id}`）改为**租约模式**：TTL=20s，Worker 正常执行期间每 10s 刷新；崩溃后旧锁在 20s 内自动过期，避免残留锁阻塞恢复
+  - `run()` 中 `try/finally` 确保所有退出路径释放任务锁并停止租约刷新
+  - **Worker 启动时主动恢复**：Celery `worker_ready` 信号触发 `recover_stale_tasks(check_lock=True)`，扫描 `running` 任务，若任务锁已消失则立即 re-queue，避免被动等待 Redis `visibility_timeout`
+  - FastAPI `lifespan()` 启动时过时任务兜底恢复（阈值 60s）
+  - `GET /api/health/workers` 运维端点（Celery `control.ping()` 返回活跃 Worker 列表）
+  - 新增 `CeleryWorkerLostException`（E3112，`recoverable=true`）
+  - 新增配置项：`CELERY_TASK_LOCK_TTL`（20s）、`CELERY_LOCK_REFRESH_INTERVAL`（10s）、`WORKER_TIMEOUT_SECONDS`（10s）、`WORKER_TIMEOUT_CHECK_INTERVAL`（5s）、`WORKER_TIMEOUT_GRACE_SECONDS`（5s）、`STALE_TASK_RECOVERY_SECONDS`（60s）、`STARTUP_RECOVERY_ENABLED`（True）、`CELERY_VISIBILITY_TIMEOUT`（1800s）
+  - Redis broker 明确配置 `visibility_timeout=1800s`，避免依赖 Celery 默认 1h
+  - **Worker 崩溃超时监察者**：FastAPI `lifespan()` 启动后台协程 `_run_worker_timeout_watcher()`，每 5s 扫描 `running` 任务；任务级锁缺失持续 10s 且超过启动宽限期后，CAS 将任务标记为 `failed`（E3112，`recoverable=true`）并推送 `task.failed` SSE，前端立即显示超时失败并允许手动断点续跑
+  - **前端启用断点续跑按钮**：`FailedView.vue` 在 `recoverable=true` 时显示可点击的「断点续跑」按钮（二次确认 + loading），`taskStore.retryTask()` 调用 `POST /api/research/{task_id}/retry` 后刷新详情并建立 SSE
+
+### Fixed
+- **修复断点续跑后报告 Trace 摘要仅含续跑后记录、续跑前阶段丢失（不完整修复）**：`_run_pipeline()` 每次都新建空 `TraceRecorder`，续跑中被 Orchestrator 跳过的已完成阶段不会调用 `record_*`，最后 `_finalize_task` 用这份不完整数据覆盖 `task.trace`，导致续跑前的 Planning/Search/Fetch/Rerank 等阶段记录全部丢失。修复：(1) `TraceRecorder` 新增 `previous_trace` 参数，构造时预加载历史阶段数据到 `_xxx_data`；新增 `_current_run_phases` 集合标记当前运行实际调用 `record_*` 的阶段；新增 `_merge_skipped_previous_phases()` 在 `finish()` 时把**未被重新执行**阶段的 tokens/cost 累加到 task 总计与 breakdown；`total_duration_ms` 改为各阶段 `duration_ms` 之和（perf_counter 差值无法覆盖 previous 阶段，且与前端 `TracePanel` 已有的「逐阶段累加」逻辑一致）。(2) `_run_pipeline()` 传入 `task.trace` 作为 `previous_trace`。被跳过的阶段保留历史数据；重新执行的阶段以新数据覆盖；首次运行（无 `previous_trace`）行为与原来等价。**注意：此修复仅覆盖"完整运行后重新执行"场景，未解决"运行中崩溃"场景——因为 trace 从未在 checkpoint 时持久化到 DB，崩溃后 `task.trace` 为空，`_preload_previous_phases()` 无事可做。根因修复见下一项。**
+- **修复断点续跑后 Trace 摘要仍仅含续跑后数据（根因：checkpoint 未持久化 trace）**：上述修复假设 `task.trace` 中已有历史数据，但 trace 仅在 `_finalize_task()` 末尾一次性写入 DB，每个 Phase 后的 checkpoint commit 从未持久化中间 trace 快照。Worker 崩溃时内存 `TraceRecorder` 销毁，恢复时 `task.trace` 为空。修复：(1) `TraceRecorder` 新增 `snapshot()` 方法，无副作用返回当前 trace dict，供 checkpoint 多次安全调用；(2) 新增 `_build_trace_dict()` 统一 dict 构建，`total_input_tokens` / `total_output_tokens` / `total_cost_usd` / `breakdown` 均从各阶段 phase data 重新计算（而非依赖仅反映当前运行的累加器），确保 preloaded 阶段的 token/cost 也被计入中间快照；(3) `_merge_skipped_previous_phases()` 新增 `_merged` 标志防重入；(4) `PipelineOrchestrator.run()` 在每个 Phase 完成后、checkpoint commit 前将 `self._trace.snapshot()` 写入 `self._task.trace`，确保崩溃恢复时 `previous_trace` 包含崩溃前所有已完成阶段的完整数据。
+- **修复断点续跑后 Trace 摘要仍丢失崩溃前阶段（退路：从 Step 记录重建 previous_trace）**：上述 checkpoint 修复覆盖了**新崩溃**场景（checkpoint 成功 → 恢复时 `task.trace` 有数据），但以下两种场景 `task.trace` 仍为空：(a) 旧代码创建的任务，崩溃前从未 checkpoint trace；(b) Worker 在首个 checkpoint commit 前崩溃（Phase 1 flush 后、commit 前），`task.trace` 为 NULL。这两种场景下 `_preload_previous_phases()` 无事可做，所有被跳过的阶段 trace 丢失。修复：新增 `_build_trace_from_steps()` 辅助函数，在 `task.trace` 为空且任务处于 `running`（恢复模式）时，从 `research_steps` 表的已完成/跳过记录中提取各 Phase 的 `duration_ms` / `input_tokens` / `output_tokens` / `model` / `cost_usd`，构建可被 `_preload_previous_phases()` 使用的 minimal trace dict。同一 Phase 多条记录时保留耗时最长的一条；token 数据优先取 `output` 字段、回退到 `cost` 字段。新增 6 个单元测试覆盖退路重建的所有分支。
+- **修复断点续跑后 SSE 未连接导致日志不加载**：`retryTask()` 中 `fetchDetail()` 仅在 `status==='running'` 时建立 SSE 连接，但续跑 API 提交后 DB 状态仍为 `pending`（Worker 尚未拾取），导致 SSE 连接被跳过。此外 `fetchDetail()` 的网络延迟期间 Worker 已开始发布事件（`task.created` / `phase.started` 等），SSE 未就绪则事件永久丢失。修复：`retryTask()` 不再调用 `fetchDetail()`，乐观更新本地状态后**立即**建立 SSE 连接；`task.status.snapshot` 提供权威状态（含已完成 steps 等），无需依赖轮询接口。`onMounted` 同步扩展为 `pending` 也自动恢复 SSE，覆盖 retry 后刷新页面的窗口期。
+- **修复断点续跑按钮点击后页面未及时进入运行态**：`taskStore.retryTask()` 原在 `POST /api/research/{task_id}/retry` 返回 202 后才将 `current.status` 乐观更新为 `running`，API 调用期间页面仍停留在失败视图，用户可重复点击「断点续跑」按钮。修复：在 `retryTask()` 内将乐观更新前置到 API 调用前，先保存原状态（status / error_code / error_message / recoverable），立即切换为 `running` 并清空错误信息；API 成功后立即建立 SSE 连接，API 失败时回滚到原状态并继续展示失败视图。
+- **修复断点续跑后 Pipeline 进度条图标全部灰色无旋转**：`retry_task()` 将 `current_phase` 清除为 `None`，SSE 连接后 `task.status.snapshot` 处理器在 `current_phase` 为 null 时跳过了 `phaseStates` 更新，导致进度条全部处于 `pending` 状态（灰色无旋转）。修复：snapshot 处理器在 `current_phase` 为 null 时调用 `buildPhaseStatesFromSteps()` 从已完成 steps 重建阶段状态，使已完成阶段显示 ✅ 图标。
+- **修复断点续跑后 `GET /api/research/{task_id}` 返回 500（`progress` 超出 1.0）**：崩溃恢复过程中，Skipped 主 Step 被重置为 `pending` 后重新完成，导致 `completed_steps` 重复累加（如 11/7，`progress=1.57`），触发 `ProgressSchema` 校验失败。修复：(1) `_update_execution_context()` 改为按当前终态主 Step 数量动态计算 `completed_steps`，不再依赖累加；(2) `_build_progress()` 对 `execution_context` 与 fallback 统计列的 `progress` 均做 `[0, 1]` 锁定兜底。
+- **修复断点续跑后 `task.total_sources` 与实际来源数不符**：`run_fetch()` 原本只把本次新抓取成功的来源数赋给 `task.total_sources`，崩溃恢复时已持久化的成功来源不在本次待抓取列表中，导致统计严重偏小。修复：新增 `_count_task_successful_sources()` 从 `research_sources` 表统计该任务所有 `fetch_status='success'` 的行，并作为 `task.total_sources` 的最终值。
+- **屏蔽 Celery Worker 侧失败态的 JSON/SQL 内部错误信息**：前端取消态与寻常失败态已统一不再暴露 JSON 格式信息，但 Celery Worker 在 `_emergency_fail`、`_handle_fatal_error`、`_handle_step_error` 中仍将原始异常/SQL 详情写入 `task.error_message` 并透传给前端。修复：新增 `get_safe_error_message()` / `get_error_type()` 辅助函数；已知 `AppException` 使用其用户可读 `error_message` 与 `error_type`；未知异常统一返回「未预期的内部错误，请稍后重试」；原始异常仅记录服务端日志。
+- **接口层兜底清洗错误消息，兼容存量脏数据**：后端写入层已修正，但数据库中已存在的旧任务仍可能包含 SQL/堆栈/JSON 等内部信息。修复：新增 `sanitize_error_message_for_client()`，在 `ResearchTaskResponse` Schema、`GET /api/research/{task_id}/state` / `/stream` snapshot、`TaskStateResolver` 返回的 error_info 等客户端可见路径统一清洗；JSON 字符串尝试提取 `message`/`error_description`，纯文本含 SQL/Traceback/`Celery Worker 未捕获异常` 等特征时统一替换为兜底文案。
+- **修复 Search 阶段 `research_sources.uk_task_url` 唯一键冲突**：`uk_task_url` 索引按 `url` 列前 255 字符生效，当两条不同 URL 前 255 字符相同时会在 DB 层冲突（如长路径仅尾部不同）。此前应用层仅按完整 URL 去重，导致 Worker 抛出 `(pymysql.err.IntegrityError) (1062, "Duplicate entry ...")`。修复：`run_search()` 内去重与已有记录检查统一使用 URL 前 255 字符键，与索引语义一致。
+- **修复 Worker 崩溃恢复后 Search 阶段唯一键冲突**：崩溃前 Search step 已部分写入 `research_sources`，恢复时重新执行 Search 会触发 `uk_task_url` 冲突。修复：`run_search()` 写入前查询任务已有 source URL，已存在则跳过；同时 `_handle_step_error` / `_handle_fatal_error` 在 session 因 `IntegrityError` 进入 rollback-only 后，先回滚恢复 session 再读取 task 属性，避免连锁 `PendingRollbackError`。
 - **修复断点续跑后任务状态永久卡在 `running`**：`retry_task()` 只重置 `failed` Step → `pending`，但崩溃残留的 `running` 子 Step 未被处理，导致 `TaskStateResolver._all_steps_terminal()` 返回 False → `resolve()` 返回当前状态 `running` → `_finalize_task` 的 CAS `SET status='running' WHERE status='running'` 无操作，状态无法变更。修复：(1) `retry_task()` 新增三步清理：崩溃残留 `running` → `failed`、非终态子 Step → `skipped`、主 Step `failed` → `pending`；(2) `_create_step()` 全部查询增加 `parent_step_id IS NULL` 过滤，确保只匹配主 Step 而非 search/fetch 内部子 Step。
 - **修复 Celery Worker 崩溃后任务死锁**：`acks_late=True` 正确重投递后，`_run_pipeline()` 二元幂等检查（`if task.status != "pending"`）错误跳过 `running` 状态任务，导致任务永久卡住。修复为三元检查，`running` 状态进入崩溃恢复路径。
+- **修复 Phase4 Pipeline 断点续跑集成测试跨测试事务泄漏**：`_run_pipeline()` / `_check_worker_timeouts()` 在测试内部调用 `session.commit()`，会提交测试 fixture 的外层事务，导致任务/Source/Evidence 数据泄漏到后续用例（`total=9`、`id=33` 等断言失败）。修复：所有相关集成测试用例使用 `_commit_to_flush()` 将 `session.commit` 重定向为 `flush`，保持事务隔离。
+- **修复 `_seed_crash_task` 在 `crash_after="search"` 时未预置 source**：该场景下 fetch 阶段会被重新执行，但预置数据未写入待抓取的 `ResearchSource`，导致 fetch 空跑、rerank 因无文档失败。修复：当 `crash_after="search"` 时预置 4 条 `fetch_status IS NULL` 的 source。
+- **修复集成测试未 mock URL 安全检查**：`_mock_pipeline_external()` 未拦截 `check_url_safety`，fetch 阶段对每个 URL 做真实 DNS 解析，既慢又依赖网络。修复：在 mock 列表中加入 `app.pipeline.fetcher.check_url_safety` 并直接放行。
+- **修复 `test_recoverable失败时_task_failed携带last_checkpoint` 异常构造错误**：自定义 `AppException` 子类使用 `error_code`/`default_message` 类属性，但当前 `AppException.__init__` 签名要求 `code`/`message` 位置参数，导致异常抛出 `TypeError`，`recoverable` 被错误识别为 `False`。修复：改用 `SynthesisFailedException(detail=...)`。
+- **修复 Evidence Graph 续跑 E3106**：Worker 在 `synthesis` 阶段崩溃后，遗留的 Step 级幂等锁 `rm:idempotency:{task_id}:synthesis` 导致恢复时 `synthesis` 被标记为 `skipped`，后续 `evidence_graph` 找不到已完成的 Synthesis Step 而抛 `E3106`。修复：`PipelineOrchestrator` 新增 `_is_recovery` 标志，崩溃恢复路径设置该标志；`_acquire_step_lock_with_recovery()` 在恢复模式 + Step 状态为 `running` + 已持有任务级锁时，强制释放遗留 Step 锁并重新获取，确保 `synthesis` 等关键阶段重新执行。
+- **修复 Worker 崩溃恢复时 `pending` 状态 Step 遗留幂等锁未被清理（两轮修复）**：
+  - **第一轮**：崩溃瞬间 DB 事务回滚，Step 状态可能从 `running` 回到 `pending`，但 Redis 幂等锁不会回滚。此前仅对 `running` Step 强制释放旧锁，扩展为 `step.status in ("pending", "running")`。
+  - **第二轮（根因修复）**：上述修复不完整——当 DB 事务回滚使 `task.status` 回到 `pending` 时，`_start_task()` 走正常路径不会设置 `_is_recovery=True`，导致强制释放条件中的 `_is_recovery` 仍为 False。真正保护并发的是任务级锁（`_task_lock_acquired`），不是 `_is_recovery` 标志。修复：(a) `_acquire_step_lock_with_recovery()` 移除 `_is_recovery` 条件，仅凭 `_task_lock_acquired=True` + `step.status IN ("pending","running")` 即强制释放；(b) `_create_step()` 的主 Step 识别从 `parent_step_id IS NULL` 改为自连接判等（`parent_step_id IS NULL OR parent.step_type != step.step_type`），与 `_update_execution_context` 对齐，修复非 planning 主 Step 恢复时无法复用遗留 Step 产生重复的 Bug；(c) `retry_task()` 额外将输出原因为 `"幂等锁已被占用（可能重复入队）"` 的 `skipped` 主 Step 重置为 `pending`，兜底手动续跑。
 - **修复进度条百分比与步骤数不一致（第 6 步显示 33% 而非 ~86%）**：回退 🟡9 的动态 `total_steps` 扩展逻辑。根因是 `_update_total_steps_on_completion` 将分母改为子步骤总数（如 18），但分子 `completed_steps` 仍按 Phase 维度计数（6），导致 `6/18≈33%`。修复：(1) `research_service.create_task()` 中 `total_steps` 恢复为 `len(PHASE_ORDER)`=7；(2) 移除 `_update_total_steps_on_completion` 方法及其调用；(3) `_start_task` 中增加安全修正——对旧任务自动将 `total_steps` 修正为 7，避免已创建任务残留动态值。
 - **Phase3 批次 B 规范修复（🟡1-🟡31，对应 REVIEW_FIX_PLAN.md §4）**——后端 19 项 + 前端 7 项 + 测试 3 项 + 文档 2 项规范化修复：
   - **后端规范化（🟡1-🟡19）**：
@@ -62,6 +101,10 @@
     - 🟡30: `API.md` 补充 `keyword` 查询参数说明；`DATABASE.md` 更新最后修改日期为 2026-06-28
     - 🟡31: `DATABASE.md §4` 新增 `[Deviation]` 说明 `delete_task` bulk `sa_delete` 的原因与影响
   - **测试结果**：后端 `pytest tests/unit/ -v` 全部通过；前端 `npm run test` 全部通过
+- **修复 SSE `task.failed` error_type 未映射为标准 E 码导致失败态布局异常**：后端 SSE 发送的是 `detail.error_type`（如 `"RerankFailed"`），而详情接口返回 `error_code`（如 `"E3105"`），首次运行态切失败态时前端将 `"RerankFailed"` 直接写入 `current.error_code`，`FailedView` 又将其下沉到「详细原因」区域，导致该区块首次渲染时错位。修复：
+  - `frontend/src/stores/task.js` 新增 `ERROR_TYPE_TO_CODE` 映射表，`normalizeErrorCode()` 优先将已知 `error_type` 字符串转换为标准 E 码，使 SSE 路径与详情接口路径的 `error_code` 一致。
+  - `frontend/src/components/report/FailedView.vue` 将「详细原因」标签由 `<span>` 改为 `<div>`，并为 `.failed-detail` / `.detail-text` 显式声明 `width: 100%` / `display: block`，提升首次渲染时的布局鲁棒性。
+  - 补充 `taskStore.sse.test.js` 与 `FailedView.test.js` 对应用例。
 
 ### Changed
 - **TESTING_STRATEGY.md 记录 Phase 3 评估基线（§11.6.3-§11.6.5）**：写入三轮人工评估聚合结果（9 条记录，总体均分 3.81，最低维度为综合质量 3.44）、系统可靠性基线（Task Completion Rate 100%、LLM Call Success Rate 100%）以及单任务检索评估示例（LLM Observability，Search Coverage/Recall@5 100%、Fetch Success Rate 77.27%、Rerank Mean 0.775），并附与 §11.3 / §11.4.5 目标的达标对比。
@@ -96,7 +139,7 @@
     - 修复 SSRF 绕过：新增 `app/utils/url_safety.py::check_url_safety()`，使用 `socket.getaddrinfo()` 解析全部 IPv4/IPv6 地址，覆盖 `127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0/8`、`::1/128`、`fc00::/7`、`fe80::/10`、`ff00::/8`；Fetch 关闭 `follow_redirects=True`，改为手动跟随并对每个跳转目标复用安全检查。
     - Fetch 阶段新增流式响应体读取，累计超过 `FETCH_MAX_BODY_SIZE`（2 MB）即标记为 `blocked`；每任务 URL 数硬上限 `FETCH_MAX_URLS_PER_TASK=15`，超出部分写入 step output `truncated` 字段。
   - **错误码与迁移**：
-    - `E3999` 错误码登记入 `docs/API.md §1.4` 速查表与 §5.3 完整错误码表，描述为「未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底）」。
+    - `E3999` 错误码登记入 `resource/docs/API.md §1.4` 速查表与 §5.3 完整错误码表，描述为「未预期的内部错误（Pipeline Worker 崩溃/未捕获异常兜底）」。
     - Alembic 迁移 `c02701951a41` 将 `sa.DateTime(timezone=True)` 改为 `sa.DateTime()`，与 `UTCDateTime` 底层类型一致并补充 UTC 注释。
   - **依赖注入健壮性**：
     - `get_current_user` 使用 `getattr(request.state, "user_id", None)`，缺失或异常时抛 `InvalidTokenException(E1004)` 返回 401，避免 `AttributeError` 导致 500。
@@ -136,11 +179,11 @@
 - CSS Design Token 新增 `--rm-report-article-width` / `--rm-evidence-highlight-*` / `--rm-evidence-flash-border`；`body.sidebar-collapsed` 下 `--rm-report-article-width` 加宽至 `800px`、`--rm-evidence-panel-width` 加宽至 `194px`，章节导航保持 `160px`。
 - `TracePanel.vue` 新增各阶段耗时比例进度条，以总耗时为 100% 显示单阶段耗时占比。
 - **离线 Pipeline 评估与人工评估策略**：
-  - 新增 `docs/TESTING_STRATEGY.md` §11「检索评估与人工评估策略」，定义 Search Recall / Fetch Success Rate / Rerank Relevance 指标公式与 v1.0 目标值，以及人工评估 4 维度、1-5 Likert 量表、抽样策略与轮次安排。
+  - 新增 `tests/TESTING_STRATEGY.md` §11「检索评估与人工评估策略」，定义 Search Recall / Fetch Success Rate / Rerank Relevance 指标公式与 v1.0 目标值，以及人工评估 4 维度、1-5 Likert 量表、抽样策略与轮次安排。
   - 新增 `app/evaluation/` 模块：`search_eval.py` / `fetch_eval.py` / `rerank_eval.py` 实现三阶段指标计算；`loader.py` / `aggregator.py` 支持按 `task_id` 生成完整 `PipelineEvaluationReport` 并与目标值对比；`manual.py` 支持人工评估 JSON 记录校验、聚合与轮次对比；`cli.py` 提供 argparse CLI。
   - 新增 `scripts/eval_offline.py` 离线评估脚本，支持 `--task-id`、`--all-completed`、`--limit`、`--json`。
   - 新增测试：`tests/unit/evaluation/test_search_eval.py`、`test_fetch_eval.py`、`test_rerank_eval.py`、`test_aggregator.py`、`test_manual.py`；`tests/integration/test_pipeline_evaluation.py` 复用全链路 Mock 验证 Pipeline 完成后评估指标正确。
-  - 更新 `docs/ROADMAP.md` §4.9，将 Phase 3「人工报告质量评估（第 1 轮）」与「离线 Pipeline 评估」标为完成，并交叉引用 TESTING_STRATEGY.md。
+  - 更新 `resource/docs/ROADMAP.md` §4.9，将 Phase 3「人工报告质量评估（第 1 轮）」与「离线 Pipeline 评估」标为完成，并交叉引用 TESTING_STRATEGY.md。
 
 - **Phase 4 §5.1 Execution Context + 断点续跑（ROADMAP §5.1）**——失败任务从最后 checkpoint 恢复执行：
   - `app/core/exceptions.py` — 扩展 `TaskStatusConflictException`：`detail` 支持结构化 `current_status` / `allowed_statuses` 字段，Retry API 返回精确冲突信息
@@ -335,7 +378,7 @@
   - `tests/conftest.py` — `async_client` fixture 中将 `db_session.commit` 在测试环境下重定向为 `flush`，避免 API 层的显式 `commit()` 提交外层事务，确保每个测试函数结束后统一回滚，消除跨测试状态泄漏
   - `tests/unit/api/test_research.py::TestListResearchAPI` — 列表 total 计数不再受前序测试残留数据影响
   - `tests/unit/services/test_auth_service.py` — 消除 `users.username` UNIQUE 冲突（前序 API 测试 commit 残留导致）
-- **同步 `TestPlanningFailedException` 断言与文档**：`tests/unit/core/test_exceptions.py` 中 E3101 的 `recoverable` 改为 `False`，并移除对 `retry_after_ms` 的断言，对齐 [API.md §5.3](docs/API.md#53-研究执行错误e3xxx) / [RESEARCH_PIPELINE.md §2.7](docs/RESEARCH_PIPELINE.md#27-checkpoint)
+- **同步 `TestPlanningFailedException` 断言与文档**：`tests/unit/core/test_exceptions.py` 中 E3101 的 `recoverable` 改为 `False`，并移除对 `retry_after_ms` 的断言，对齐 [API.md §5.3](resource/docs/API.md#53-研究执行错误e3xxx) / [RESEARCH_PIPELINE.md §2.7](docs/RESEARCH_PIPELINE.md#27-checkpoint)
 
 ### Changed
 - `app/services/research_service.py` — 移除 Celery 分发逻辑（commit+delay 移至 API 层），`create_task()` 仅做 flush，更新 docstring
@@ -362,7 +405,7 @@
   - 后端 9 个"直接复制"文件已落地（含本次补齐的 `fusion.py` / `sentence_matcher.py` / `evidence_auditor.py`）+ 4 个"需改造适配"文件锚点已写入 RESEARCH_PIPELINE.md
   - 前端 9 个"直接复制"文件已落地（含本次补齐的 `format.js` / `markdown.js` / `useECharts.js`）+ FRONTEND.md 新增 §1.4 共享工具模块
   - 设计文档补 10 个模块锚点（RESEARCH_PIPELINE.md 5 处 + FRONTEND.md 3 处 + §1.4）
-  - CLAUDE.md / DEVELOPMENT.md / ROADMAP.md / README.md / TESTING_STRATEGY.md / UIDESIGN.md 的交叉引用全部更新
+  - CLAUDE.md / resource/docs/DEVELOPMENT.md / resource/docs/ROADMAP.md / README.md / tests/TESTING_STRATEGY.md / frontend/docs/UIDESIGN.md 的交叉引用全部更新
 
 ### Fixed
 - **Phase2 代码审查修复（第一批：功能正确性阻断）**：
@@ -382,7 +425,7 @@
   - **S6**: `app/models/research_task.py` — 补 `updated_at` 列（`UTCDateTime` + `server_default=func.current_timestamp()` + `onupdate=func.current_timestamp()`），与 `DATABASE.md §2` 定义一致；生成 Alembic 迁移 `c02701951a41`
   - **S7**: `app/core/exceptions.py` — `E3101 PlanningFailedException` 和 `E3105 RerankFailedException` 的 `recoverable` 从 `True` 改为 `False`，与 `task_state_resolver.py` FATAL 集和 `API.md §5.3` 错误码表一致
   - **Phase2 代码审查修复（第四批：测试与规范修复）**：
-    - **S9**: `docs/TESTING_STRATEGY.md` — 新增 Phase2 说明段落
+    - **S9**: `tests/TESTING_STRATEGY.md` — 新增 Phase2 说明段落
     - **S10**: 新建 `tests/unit/services/test_pipeline_orchestrator.py` — 9 个用例覆盖七阶段调度、幂等锁、FATAL 终止、_finalize_task 三分支
     - **S11**: `test_sse.py:175-179` `pass` → `pytest.skip`；`test_lock.py:287-295` 补断言
     - **N5**: `exceptions.py` — 新增 `UnknownInternalException`（E3999）
@@ -399,7 +442,7 @@
 
 ### Added
 - **测试基础设施与策略文档（ROADMAP §2.7）**：
-  - `docs/TESTING_STRATEGY.md`（v2.0）— 10 章节测试策略纲领：§1 核心质量挑战（Pipeline 7×7×6 状态空间）+ 测试金字塔（含压测层）+ 8 条核心原则 / §2 后端三层 + 前端三层分层 / §3 基础设施（pytest.ini 配置 + SQLite 内存库隔离 + Mock 策略矩阵 + 环境变量隔离）/ §4 后端策略（关键路径 100% 覆盖四模块 + 异常体系 31+ 类三维度验证 + 安全模块 7 函数成对测试 + Auth Service 6 函数全分支含泄露检测 E1009 + LLM 重试策略 5 场景 + Pipeline 9 阶段验证要点 + Trace Recorder + 6 个辅助模块覆盖要点，各节含精简模式示例）/ §5 前端策略（Store 并发防抖 / API 拦截器 / 组件表单校验与 SSE 事件驱动 / 路由守卫）/ §6 GitHub Actions CI/CD（MySQL + Redis service containers + Codecov）+ Pre-commit Hook / §7 分 Phase 覆盖率目标（Phase 1: 后端 ≥85% 行覆盖/≥80% 分支、前端 ≥75% 行覆盖/≥70% 分支，关键路径任何阶段 ≥100%）/ §8 编写规范（命名/结构/标记 + 禁止模式对照表）/ §9 按 Phase 测试重点与关键风险矩阵 / §10 命令速查 + 新模块上线流程。测试进度追踪见 ROADMAP.md
+  - `tests/TESTING_STRATEGY.md`（v2.0）— 10 章节测试策略纲领：§1 核心质量挑战（Pipeline 7×7×6 状态空间）+ 测试金字塔（含压测层）+ 8 条核心原则 / §2 后端三层 + 前端三层分层 / §3 基础设施（pytest.ini 配置 + SQLite 内存库隔离 + Mock 策略矩阵 + 环境变量隔离）/ §4 后端策略（关键路径 100% 覆盖四模块 + 异常体系 31+ 类三维度验证 + 安全模块 7 函数成对测试 + Auth Service 6 函数全分支含泄露检测 E1009 + LLM 重试策略 5 场景 + Pipeline 9 阶段验证要点 + Trace Recorder + 6 个辅助模块覆盖要点，各节含精简模式示例）/ §5 前端策略（Store 并发防抖 / API 拦截器 / 组件表单校验与 SSE 事件驱动 / 路由守卫）/ §6 GitHub Actions CI/CD（MySQL + Redis service containers + Codecov）+ Pre-commit Hook / §7 分 Phase 覆盖率目标（Phase 1: 后端 ≥85% 行覆盖/≥80% 分支、前端 ≥75% 行覆盖/≥70% 分支，关键路径任何阶段 ≥100%）/ §8 编写规范（命名/结构/标记 + 禁止模式对照表）/ §9 按 Phase 测试重点与关键风险矩阵 / §10 命令速查 + 新模块上线流程。测试进度追踪见 ROADMAP.md
   - `pytest.ini` — pytest 配置（asyncio_mode=auto, default_loop_scope=function, strict-markers, unit/integration/slow/regression 四标记）
   - `tests/conftest.py` — 共享 fixtures：SQLite 内存 test_engine（session 级复用 + 自动建表）、db_session（函数级事务隔离 + 自动回滚）、async_client（FastAPI httpx AsyncClient + get_db 依赖覆盖）、auth token fixtures（valid_access_token / valid_admin_token / valid_refresh_token_str / auth_headers / admin_headers）、seeded_user 预置数据
   - `frontend/vitest.config.js` — 前端测试配置（jsdom 环境 + `@/` 别名 + v8 覆盖率）
@@ -483,18 +526,18 @@
 - `config.py` 新增限流配置项：`RATE_LIMIT_ENABLED` / `RATE_LIMIT_WINDOW_SECONDS` / `RATE_LIMIT_RESEARCH_PER_MINUTE` / `RATE_LIMIT_LOGIN_PER_MINUTE` / `RATE_LIMIT_DEFAULT_PER_MINUTE`（全部默认关闭，Phase 4 激活）
 
 - 项目初始化：创建 ResearchMind 仓库
-- 产品需求文档 [PRD.md](PRD.md)
+- 产品需求文档 [PRD.md](../resource/docs/PRD.md)
 - 架构设计文档 [ARCHITECTURE.md](ARCHITECTURE.md)
 - 研究管线设计文档 [RESEARCH_PIPELINE.md](RESEARCH_PIPELINE.md)
-- 接口文档 [API.md](API.md)
+- 接口文档 [API.md](../resource/docs/API.md)
 - 数据库设计文档 [DATABASE.md](DATABASE.md)
 - 基础设施复用清单 [INFRASTRUCTURE_REUSE.md](INFRASTRUCTURE_REUSE.md)
-- 版本演进路线 [ROADMAP.md](ROADMAP.md)
-- 开发指南 [DEVELOPMENT.md](DEVELOPMENT.md)
+- 版本演进路线 [ROADMAP.md](../resource/docs/ROADMAP.md)
+- 开发指南 [DEVELOPMENT.md](../resource/docs/DEVELOPMENT.md)
 - 项目入口 [README.md](../README.md)
-- 前端交互设计文档 [FRONTEND.md](FRONTEND.md)
+- 前端交互设计文档 [FRONTEND.md](../frontend/docs/FRONTEND.md)
 - 前端基础设施复用清单 [INFRASTRUCTURE_REUSE_FRONTEND.md](INFRASTRUCTURE_REUSE_FRONTEND.md)
-- 前端 UI 样式规范 [UIDESIGN.md](UIDESIGN.md)（Design Token `--rm-*` 体系，提取自 `ai_studio_code.html` 静态原型）
+- 前端 UI 样式规范 [UIDESIGN.md](../frontend/docs/UIDESIGN.md)（Design Token `--rm-*` 体系，提取自 `ai_studio_code.html` 静态原型）
 
 ### Fixed
 - API.md §5.3：E3107 `recoverable` 从 `false` 修正为 `true`（与 RESEARCH_PIPELINE.md §8.7/§8.9 一致——Render 失败可复用 Evidence Graph 重渲）

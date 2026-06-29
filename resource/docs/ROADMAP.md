@@ -3,7 +3,7 @@
 | 属性 | 值 |
 |:---|:---|
 | 文档版本 | v1.0 |
-| 最后更新 | 2026-06-28 |
+| 最后更新 | 2026-06-29 |
 
 > 本文档是 **开发排期、Phase 顺序、任务依赖关系** 的唯一真理源。相关定义禁止在其他文档中重复，应使用交叉引用链接到本文档对应章节。
 
@@ -38,7 +38,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 > **状态标记**：⏳ 待开始 | 🔲 进行中 | ✅ 已完成 | ❌ 已废弃
 >
 > Phase 1 ✅ 完成 | Phase 2 ✅ 完成：§3.1 研究任务 CRUD + 状态机 ✅ | §3.2 Celery 异步 Pipeline 编排 ✅ | §3.3 Planning ✅ | §3.4 Search ✅ | §3.5 Fetch ✅ | §3.6 SSE 端点 ✅ | §3.7 前端研究任务创建+历史列表+SSE框架 ✅。
-> Phase 3 ✅ 已完成：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ✅ | §4.6 成本追踪 ✅ | §4.7 前端运行态/完成态 ✅。Phase 4 §5.1 Execution Context + 断点续跑 ✅。
+> Phase 3 ✅ 已完成：§4.1 Rerank ✅ | §4.2 Synthesis ✅ | §4.3 Evidence Graph Build ✅ | §4.4 Report Render ✅ | §4.5 Cancel ✅ | §4.6 成本追踪 ✅ | §4.7 前端运行态/完成态 ✅。Phase 4 全部完成（§5.1 Execution Context + 断点续跑 ✅、§5.2 基础设施加固 ✅、§5.3 Retry/Cancel UI ✅）。
 
 ---
 ## 2. Phase 1：骨架搭建 + 认证系统（3-4 天）
@@ -69,26 +69,26 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | `section_evidence` 表 | `section_id FK→sections(CASCADE)` / `evidence_id FK→evidence(CASCADE)` / `PRIMARY KEY (section_id, evidence_id)` |
 | ✅ | 初始迁移脚本 | `alembic revision --autogenerate -m "init"` + `alembic upgrade head` |
 
-> **表结构权威定义**：[DATABASE.md §2](DATABASE.md#2-表结构)。外键策略详见 [DATABASE.md §4](DATABASE.md#4-外键策略)。
+> **表结构权威定义**：[DATABASE.md §2](../../docs/DATABASE.md#2-表结构)。外键策略详见 [DATABASE.md §4](../../docs/DATABASE.md#4-外键策略)。
 
 ### 2.3 [后端] 基础设施复用落地
 
-> 从 DocMind 复制以下基础设施模块并适配（各模块锚点现见对应设计文档：API.md / DATABASE.md / RESEARCH_PIPELINE.md / FRONTEND.md §1.4）。
+> 直接实现以下基础设施模块（各模块锚点现见对应设计文档：API.md / DATABASE.md / RESEARCH_PIPELINE.md / FRONTEND.md §1.4）。
 
 | 状态 | 任务 | 说明 | 复用方式 |
 |:---|:---|:---|:---|
-| ✅ | 异常体系 | `app/core/exceptions.py` — `AppException` 基类 + `code`/`message`/`detail` 三元组，31 个异常类 | 直接复制模板，替换错误码枚举（E1xxx/E2xxx/E3xxx/E9xxx），detail 扩展为 `dict\|str` |
-| ✅ | LLM 客户端 | `app/core/llm.py` — DeepSeek SDK 封装（流式/非流式调用、错误分类、分级重试） | 直接复制，改模型默认值为 `deepseek-v4-pro`，新增 timeout/rate_limit/auth_error 重试策略 |
-| ✅ | Token 估算 | `app/core/token_counter.py` — 中英文自适应算法（中文>30%→1.5，否则 4.0） | 直接复制函数，零改动 |
-| ✅ | JWT 安全模块 | `app/core/security.py` — `hash_password` / `verify_password` / `create_access_token` / `decode_access_token` / `create_refresh_token` | 直接复制，微调 `users` 表字段映射 |
-| ✅ | JWT 认证中间件 | `app/middleware/auth_middleware.py` — ASGI 中间件，验证 Bearer Token，写入 `request.state` | 直接复制，错误码 E5004→E1004，detail 改为结构化 JSON |
-| ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验）/ `require_admin` | 直接复制，`get_db` 使用 `async_session_factory` 创建会话 |
-| ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` / `require_admin` 三层分离 | 直接复制模式，替换 Task 级权限检查逻辑 |
-| ✅ | 时区策略 | `app/models/_types.py`（`UTCDateTime`）+ `app/core/database.py`（`SET time_zone='+00:00'`）+ 四层 UTC 统一 | 直接复制 `UTCDateTime` 与四层 UTC 策略（Phase 1 脚手架已提前完成） |
+| ✅ | 异常体系 | `app/core/exceptions.py` — `AppException` 基类 + `code`/`message`/`detail` 三元组，31 个异常类 | 直接实现，错误码枚举 E1xxx/E2xxx/E3xxx/E9xxx，detail 扩展为 `dict\|str` |
+| ✅ | LLM 客户端 | `app/core/llm.py` — DeepSeek SDK 封装（流式/非流式调用、错误分类、分级重试） | 直接实现，模型默认值 `deepseek-v4-pro`，含 timeout/rate_limit/auth_error 重试策略 |
+| ✅ | Token 估算 | `app/core/token_counter.py` — 中英文自适应算法（中文>30%→1.5，否则 4.0） | 直接实现，零改动 |
+| ✅ | JWT 安全模块 | `app/core/security.py` — `hash_password` / `verify_password` / `create_access_token` / `decode_access_token` / `create_refresh_token` | 直接实现，映射 `users` 表字段 |
+| ✅ | JWT 认证中间件 | `app/middleware/auth_middleware.py` — ASGI 中间件，验证 Bearer Token，写入 `request.state` | 直接实现，错误码 E1004，detail 结构化 JSON |
+| ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验）/ `require_admin` | 直接实现，`get_db` 使用 `async_session_factory` 创建会话 |
+| ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` / `require_admin` 三层分离 | 直接实现，含 Task 级权限检查逻辑 |
+| ✅ | 时区策略 | `app/models/_types.py`（`UTCDateTime`）+ `app/core/database.py`（`SET time_zone='+00:00'`）+ 四层 UTC 统一 | 直接实现 `UTCDateTime` 与四层 UTC 策略（Phase 1 脚手架已提前完成） |
 | ✅ | SSE 流式框架 | `app/core/sse.py` — 手动 `StreamingResponse` + 15s 心跳注释帧 | 保留 SSE 传输层框架，Phase 2-3 替换全部事件类型 |
-| ✅ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + Pipeline 七阶段 | 直接复制类结构，改阶段名称为 Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render |
-| ✅ | BM25 核心（轻量版） | `app/pipeline/bm25.py` — `BM25Okapi` + `jieba.lcut` 核心，72 行纯内存计算 | 不复用 DocMind 的 ~686 行版（含三级缓存），重写轻量版 |
-| ✅ | 结构化日志 | `app/core/logging_config.py` — contextvars（`request_id_var`/`user_id_var`）+ JSONFormatter + RequestIDFilter + `setup_logging()` | 直接复制，零改动 |
+| ✅ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + Pipeline 七阶段 | 直接实现，阶段名称 Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render |
+| ✅ | BM25 核心（轻量版） | `app/pipeline/bm25.py` — `BM25Okapi` + `jieba.lcut` 核心，72 行纯内存计算 | 重写轻量版（不含三级缓存） |
+| ✅ | 结构化日志 | `app/core/logging_config.py` — contextvars（`request_id_var`/`user_id_var`）+ JSONFormatter + RequestIDFilter + `setup_logging()` | 直接实现，零改动 |
 | ✅ | Request ID 中间件 | `app/middleware/request_id_middleware.py` — 生成/透传 `X-Request-ID` + 注入 contextvars | 直接复制，零改动 |
 | ✅ | Redis 客户端 | `app/core/redis_client.py` — 同步/异步双客户端 + Windows 兼容包装 | 直接复制，零改动（Phase 2 Celery + SSE Bridge 依赖） |
 | ✅ | 通用工具 | `app/core/utils.py` — `escape_like()` SQL LIKE 转义 | 直接复制，零改动 |
@@ -108,19 +108,19 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 ### 2.5 [前端] 项目脚手架 + Auth + 布局框架
 
-> **复用策略**：Phase 1 前端约 80% 代码可从 DocMind 直接复用或微调（工程配置 / Auth 体系 / 布局框架 / Design Token 系统），各模块锚点见 [FRONTEND.md §1.4](../frontend/docs/FRONTEND.md#14-共享工具模块)。
+> **复用策略**：Phase 1 前端约 80% 代码复用既有基础设施（工程配置 / Auth 体系 / 布局框架 / Design Token 系统），各模块锚点见 [FRONTEND.md §1.4](../../frontend/docs/FRONTEND.md#14-共享工具模块)。
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
 | ✅ | 项目脚手架 | `package.json`（Vue 3 + Vite + Pinia + Element Plus + Axios + Font Awesome + markdown-it + highlight.js + Vitest）+ `vite.config.js`（`@/` alias + proxy `/api` → `localhost:8000`）+ `index.html`（title「ResearchMind」）+ 目录结构（`api/` / `stores/` / `router/` / `views/` / `components/` / `utils/` / `styles/`） | — |
-| ✅ | Design Token 系统 | `styles/global.css` — `--rm-*` CSS 变量全量定义（品牌色 / 语义色 / 中性色 / 字体 / 间距 / 圆角 / 阴影 / 过渡 / Element Plus 覆盖）。从 DocMind 复制全部变量定义，改前缀 `--dm-` → `--rm-`，移除 `--dm-evidence-highlight-bg` / `--dm-orphan-*` 系列 | UIDESIGN.md §1 |
-| ✅ | Axios 实例 + 拦截器 | `api/index.js` — Axios 实例（baseURL + 30s 超时）+ 请求拦截器（附 `Authorization: Bearer <access_token>`）+ 响应拦截器（401+E1003 → `authStore.refresh()` → 重放原请求 + `isRefreshing` 并发防抖 + `scheduleRefresh` 定时器）。从 DocMind 直接复制，Token 过期错误码 E5003→E1003（单行改动） | FRONTEND.md §1.3 |
-| ✅ | Auth API 封装 | `api/auth.js` — `login()` / `register()` / `refresh()` / `logout()` / `changePassword()` 五个函数。从 DocMind 直接复制 | FRONTEND.md §3 |
-| ✅ | AuthStore (Pinia) | `stores/auth.js` — `user` / `token` / `isAdmin` / `login()` / `logout()` / `refresh()` / `register()`。从 DocMind 直接复制 | FRONTEND.md §1.2 |
-| ✅ | 路由骨架 + 守卫 | `router/index.js` — 路由表（§2.1 全部路由）+ 三级路由守卫（公开/需登录/需管理员）。从 DocMind 复制守卫逻辑，替换路由表 | FRONTEND.md §2 |
-| ✅ | LoginPage | `views/LoginPage.vue` — 品牌区（Logo + 标题「ResearchMind」+ 副标题「可审计的结构化研究引擎」）+ Tab 切换（登录/注册）+ 表单（用户名+密码，图标前缀）+ 错误提示 + 提交按钮 loading + 底部互转链接。从 DocMind 直接复制，替换品牌区文案 | FRONTEND.md §3 |
-| ✅ | AppLayout + Sidebar | `components/layout/AppLayout.vue` + `Sidebar.vue` — 双栏布局（Sidebar 260px/64px 收起 + 主内容区）+ 侧边栏（Logo + 新建研究按钮 + 历史任务列表 + 导航链接 + 用户栏头像/用户名 + 用户菜单卡片 + 展开/收起切换动画）。从 DocMind 复制布局骨架，替换侧边栏导航项（知识库→历史任务） | FRONTEND.md §4.6 |
-| ✅ | 用户菜单卡片 + 修改密码对话框 | Sidebar 内嵌用户菜单（修改密码 / 管理后台[admin] / 退出登录）+ `el-dialog` 修改密码弹窗（420px，旧密码+新密码+确认新密码，含一致性校验）。从 DocMind 直接复制 | FRONTEND.md §4.6.4 / §4.7 |
+| ✅ | Design Token 系统 | `styles/global.css` — `--rm-*` CSS 变量全量定义（品牌色 / 语义色 / 中性色 / 字体 / 间距 / 圆角 / 阴影 / 过渡 / Element Plus 覆盖）。采用 `--rm-` 前缀全量变量定义 | UIDESIGN.md §1 |
+| ✅ | Axios 实例 + 拦截器 | `api/index.js` — Axios 实例（baseURL + 30s 超时）+ 请求拦截器（附 `Authorization: Bearer <access_token>`）+ 响应拦截器（401+E1003 → `authStore.refresh()` → 重放原请求 + `isRefreshing` 并发防抖 + `scheduleRefresh` 定时器）。Token 过期错误码 E1003 | FRONTEND.md §1.3 |
+| ✅ | Auth API 封装 | `api/auth.js` — `login()` / `register()` / `refresh()` / `logout()` / `changePassword()` 五个函数 | FRONTEND.md §3 |
+| ✅ | AuthStore (Pinia) | `stores/auth.js` — `user` / `token` / `isAdmin` / `login()` / `logout()` / `refresh()` / `register()` | FRONTEND.md §1.2 |
+| ✅ | 路由骨架 + 守卫 | `router/index.js` — 路由表（§2.1 全部路由）+ 三级路由守卫（公开/需登录/需管理员） | FRONTEND.md §2 |
+| ✅ | LoginPage | `views/LoginPage.vue` — 品牌区（Logo + 标题「ResearchMind」+ 副标题「可审计的结构化研究引擎」）+ Tab 切换（登录/注册）+ 表单（用户名+密码，图标前缀）+ 错误提示 + 提交按钮 loading + 底部互转链接 | FRONTEND.md §3 |
+| ✅ | AppLayout + Sidebar | `components/layout/AppLayout.vue` + `Sidebar.vue` — 双栏布局（Sidebar 260px/64px 收起 + 主内容区）+ 侧边栏（Logo + 新建研究按钮 + 历史任务列表 + 导航链接 + 用户栏头像/用户名 + 用户菜单卡片 + 展开/收起切换动画）。侧边栏导航项为历史任务 | FRONTEND.md §4.6 |
+| ✅ | 用户菜单卡片 + 修改密码对话框 | Sidebar 内嵌用户菜单（修改密码 / 管理后台[admin] / 退出登录）+ `el-dialog` 修改密码弹窗（420px，旧密码+新密码+确认新密码，含一致性校验） | FRONTEND.md §4.6.4 / §4.7 |
 | ✅ | App.vue 根组件 | `<router-view />` + 全局样式引入 | — |
 
 ### 2.6 🚫 本阶段不做的
@@ -189,7 +189,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | `task_type` 策略注入 | `comparison` → 对比矩阵拆解 / `explainer` → 研究方向聚类 / `analysis` → 因果链拆解 | 决策 #11 |
 | ✅ | Planning Step 状态流转 | `step.started` → `step.progress`(含 `sub_questions_generated`) → `step.completed`(含 sub_questions 摘要) + `phase.completed` | — |
 
-> **Planning Prompt 模板**：[RESEARCH_PIPELINE.md §2.3](RESEARCH_PIPELINE.md#23-system-prompt)。`task_type` 策略：[RESEARCH_PIPELINE.md §2.4](RESEARCH_PIPELINE.md#24-task_type-驱动的拆解策略)。
+> **Planning Prompt 模板**：[RESEARCH_PIPELINE.md §2.3](../../docs/RESEARCH_PIPELINE.md#23-system-prompt)。`task_type` 策略：[RESEARCH_PIPELINE.md §2.4](../../docs/RESEARCH_PIPELINE.md#24-task_type-驱动的拆解策略)。
 
 ### 3.4 [后端] Search 阶段
 
@@ -199,7 +199,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Search 失败策略 | 单个子问题 0 结果→SKIPPED / 单次 API 失败→重试 2 次（指数退避 1s/2s）→仍失败→SKIPPED / 全部子问题失败→E3102 | 决策 #13 |
 | ✅ | Search Step 状态流转 | 每个子问题独立 Step：`step.started`(含 `label: "搜索子问题 N: ..."`) → `step.completed`(含 `results_count`) / `step.skipped` | — |
 
-> **Search 策略详设**：[RESEARCH_PIPELINE.md §3](RESEARCH_PIPELINE.md#3-search--多子问题搜索)。
+> **Search 策略详设**：[RESEARCH_PIPELINE.md §3](../../docs/RESEARCH_PIPELINE.md#3-search--多子问题搜索)。
 
 ### 3.5 [后端] Fetch 阶段
 
@@ -209,7 +209,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Fetch 失败策略 | 超时→重试 1 次→仍失败→SKIPPED / HTTP 403/404/5xx→不重试直接 SKIPPED / DNS 失败→SKIPPED / 正文为空→SKIPPED | 决策 #15 |
 | ✅ | Fetch Step 状态流转 | 每个 URL 独立 Step：`step.started`(含 `url`) → `step.completed`(含 `content_length`) / `step.skipped`(含 `reason`) | — |
 
-> **Fetch 安全约束**：[RESEARCH_PIPELINE.md §4.4](RESEARCH_PIPELINE.md#44-安全约束)。
+> **Fetch 安全约束**：[RESEARCH_PIPELINE.md §4.4](../../docs/RESEARCH_PIPELINE.md#44-安全约束)。
 
 ### 3.6 [后端] SSE 事件实现
 
@@ -220,7 +220,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | SSE 重连恢复 | 客户端重连时立即推送 `task.status.snapshot`（含当前 Task State / Phase / 所有已完成 Step 摘要 / `progress`），后续恢复正常增量推送 | 决策 #18 |
 | ✅ | `GET /api/research/{task_id}/state` | REST 版状态快照（SSE `task.status.snapshot` 的等价物），供客户端轮询降级 | — |
 
-> **SSE 事件协议**：[API.md §4](API.md#4-sse-事件协议)。事件映射：[RESEARCH_PIPELINE.md §9](RESEARCH_PIPELINE.md#9-pipeline-sse-事件映射)。
+> **SSE 事件协议**：[API.md §4](API.md#4-sse-事件协议)。事件映射：[RESEARCH_PIPELINE.md §9](../../docs/RESEARCH_PIPELINE.md#9-pipeline-sse-事件映射)。
 
 ### 3.7 [前端] 研究任务创建 + 历史列表 + SSE 框架
 
@@ -232,8 +232,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | ResearchPage 状态切换 | 根据 `taskStore.current.status` 切换三种 UI：创建态（`null`）/ 运行态（`pending`/`running`）/ 完成态（`completed`/`partially_completed`/`failed`/`canceled`） | FRONTEND.md §4.2 |
 | ✅ | TaskStore (Pinia) | `stores/task.js` — `taskList` / `current` / `sseStatus`(5态：disconnected/connecting/connected/reconnecting/error) / `progress` / `create()` / `fetchList()` / `fetchDetail()` / `cancel()` / `retry()` / `connectSSE()` / `disconnect()` | FRONTEND.md §1.2 |
 | ✅ | Research API 封装 | `api/research.js` — `createTask()` / `getTaskList()` / `getTaskDetail()` / `deleteTask()` / `cancelTask()` / `getTaskState()` | — |
-| ✅ | SSE 解析工具 | `utils/sse.js` — `fetch` + `ReadableStream` + `response.body.getReader()` 逐块读取 + buffer 按 `\n\n` 分割 + 注释帧跳过（`: ping`）+ `event:`/`data:` 行解析 → 回调 dispatch。从 DocMind 复制通用解析框架（~80 行，0 事件处理器），事件处理在 `stores/task.js`（15 个 case，v1.0 + 2 种 [v2] 预留） | FRONTEND.md §8, FRONTEND.md §1.4 |
-| ✅ | 格式化工具 | `utils/format.js` — `formatDateTime()` / `formatRelativeTime()` / `formatNumber()` / `formatDuration()` / `formatBytes()`。已从 DocMind 复制并扩展 `formatNumber`/`formatDuration` | FRONTEND.md §1.4 |
+| ✅ | SSE 解析工具 | `utils/sse.js` — `fetch` + `ReadableStream` + `response.body.getReader()` 逐块读取 + buffer 按 `\n\n` 分割 + 注释帧跳过（`: ping`）+ `event:`/`data:` 行解析 → 回调 dispatch。通用解析框架（~80 行，0 事件处理器），事件处理在 `stores/task.js`（15 个 case，v1.0 + 2 种 [v2] 预留） | FRONTEND.md §8, FRONTEND.md §1.4 |
+| ✅ | 格式化工具 | `utils/format.js` — `formatDateTime()` / `formatRelativeTime()` / `formatNumber()` / `formatDuration()` / `formatBytes()`。含扩展的 `formatNumber`/`formatDuration` | FRONTEND.md §1.4 |
 | ✅ | HistoryPage | `views/HistoryPage.vue` — 表格（研究主题截取前 40 字符 + tooltip / task_type 标签 / 状态标签 / 来源数 / 证据数 / 创建时间 / 操作[查看/删除]）+ 状态筛选 `el-select` + 主题搜索 `el-input` + 分页 `el-pagination` + 空状态「暂无研究任务」+ 引导按钮 → `/research` | FRONTEND.md §5 |
 | ✅ | History API 封装 | `api/research.js` 中 `getTaskList()` — 分页 + `status` 筛选 + `search` 搜索 + `sort_by=created_at` + `order=desc` | — |
 | ✅ | Sidebar 历史任务列表 | Sidebar 内历史任务区域：调用 `taskStore.fetchList()` → 按时间分组（今天/昨天/近7天/更早）+ 状态图标（✅completed / ⚠️partially_completed / ❌failed / 🚫canceled / ⏳running / 🔄pending）+ 点击加载任务详情 + 高亮当前任务 | FRONTEND.md §4.6.1 |
@@ -286,7 +286,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Rerank Prompt 模板 | 相关性（40%）+ 信息量（30%）+ 权威性（15%）+ `task_type_dimension`（15%）四维评分 | 决策 #21 |
 | ✅ | Rerank 失败策略 | BM25 候选为空→E3105 / LLM Rerank 失败→重试 2 次→仍失败→E3105 / Evidence 数量<3→质量警告不阻断 | — |
 
-> **Rerank 二段式架构**：[RESEARCH_PIPELINE.md §5](RESEARCH_PIPELINE.md#5-rerank--证据粗筛精排)。
+> **Rerank 二段式架构**：[RESEARCH_PIPELINE.md §5](../../docs/RESEARCH_PIPELINE.md#5-rerank--证据粗筛精排)。
 
 ### 4.2 [后端] Synthesis 阶段
 
@@ -296,7 +296,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Synthesis Prompt 模板 | Evidence[] 按 `relevance_score` 降序排列，单条截断至 1500 字符，输出 `clusters[]` / `conflicts[]` / `knowledge_gaps[]` / `overall_assessment` | 决策 #23 |
 | ✅ | Synthesis 失败策略 | LLM 失败→重试 3 次→仍失败→E3104 (`recoverable=true`) / 输出 JSON 无效→重试（计入次数） / conflicts 为 null→不阻断 | — |
 
-> **Synthesis Prompt**：[RESEARCH_PIPELINE.md §6.2](RESEARCH_PIPELINE.md#62-system-prompt)。
+> **Synthesis Prompt**：[RESEARCH_PIPELINE.md §6.2](../../docs/RESEARCH_PIPELINE.md#62-system-prompt)。
 
 ### 4.3 [后端] Evidence Graph Build
 
@@ -306,7 +306,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Evidence Graph 持久化 | 写入 `research_steps.output`（`step_type='evidence_graph'`），Render 阶段直接读取；`items[].used_in_sections` 由 Report Render 阶段填充 | — |
 | ✅ | Evidence Graph 失败策略 | 纯数据组装→失败说明上游数据结构问题→E3106 (`recoverable=false`) | — |
 
-> **Evidence Graph 数据模型**：[RESEARCH_PIPELINE.md §7.3](RESEARCH_PIPELINE.md#73-数据模型)。
+> **Evidence Graph 数据模型**：[RESEARCH_PIPELINE.md §7.3](../../docs/RESEARCH_PIPELINE.md#73-数据模型)。
 
 ### 4.4 [后端] Report Render
 
@@ -318,7 +318,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Report GET API | `GET /api/research/{task_id}/report` — 返回完整 Report JSON（`report.sections[]` + `evidence_graph` + `trace`） | — |
 | ✅ | Render 失败策略 | LLM 失败→重试 1 次→仍失败→E3107 (`recoverable=true`，可复用 Evidence Graph 重渲) / Section 数量<预期→不阻断 / 引用提取失败→标记 `citation_issues` | — |
 
-> **Report Render 详设**：[RESEARCH_PIPELINE.md §8](RESEARCH_PIPELINE.md#8-report-render--报告渲染)。Report JSON 结构：[API.md §3.3](API.md#33-结果获取)。
+> **Report Render 详设**：[RESEARCH_PIPELINE.md §8](../../docs/RESEARCH_PIPELINE.md#8-report-render--报告渲染)。Report JSON 结构：[API.md §3.3](API.md#33-结果获取)。
 
 ### 4.5 [后端] Cancel 基础实现
 
@@ -334,7 +334,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Cost Tracker | `app/core/cost_tracker.py` — DeepSeek 模型定价字典 + `calculate_cost_usd()` 按 cache miss 单价计算 + `extract_step_cost()` 从 Step output 提取 token/model/cost；Orchestrator `_complete_step()` 在 Step 完成后设置 `step.cost` |
 | ✅ | Task 级成本聚合 | `TraceRecorder` 新增 `_phase_cost`/`_accumulate_cost()`，为 planning/rerank/synthesis/render 埋点；`finish()` 输出 `total_tokens`/`total_cost_usd`/`breakdown` |
 
-> **成本追踪**：[RESEARCH_PIPELINE.md §11](RESEARCH_PIPELINE.md#11-成本追踪与-token-预算)。
+> **成本追踪**：[RESEARCH_PIPELINE.md §11](../../docs/RESEARCH_PIPELINE.md#11-成本追踪与-token-预算)。
 
 ### 4.7 [前端] 运行态进度可视化 + 完成态报告查看
 
@@ -347,7 +347,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | SSE 重连机制 | 意外断开→指数退避重连（1s/2s/4s/8s，最多 3 次）→ 重连成功后 `task.status.snapshot` 恢复完整进度 UI。用户主动取消任务时不重连 | FRONTEND.md §8.1 |
 | ✅ | ResearchPage 完成态 — 报告查看 | `views/ResearchPage.vue` 完成态三栏布局：章节导航（240px，`report.sections[].heading` 层级列表 + 当前高亮 + 引用数量 badge）+ 报告正文（Markdown 渲染 + `[来源N]` 可点击锚点）+ Evidence Graph 面板（320px 可折叠） | FRONTEND.md §4.5, UIDESIGN.md §4.12 |
 | ✅ | 章节导航组件 | `components/report/SectionNav.vue` — 固定 240px 左侧栏，`<ul>` 层级列表，当前阅读章节高亮（teal-50 bg + teal-600 left border），点击→报告正文平滑滚动到对应 heading anchor | FRONTEND.md §4.5.2 |
-| ✅ | Markdown 渲染器 | `utils/markdown.js` — 已从 DocMind 复制并就位（markdown-it + highlight.js + `[来源N]` 引用锚点 plugin + wrapCodeBlocks），集成到 `ReportArticle` 组件。[Deviation] 多索引时 `data-evidence-index` 使用空格分隔 | FRONTEND.md §4.5.3, FRONTEND.md §1.4 |
+| ✅ | Markdown 渲染器 | `utils/markdown.js` — markdown-it + highlight.js + `[来源N]` 引用锚点 plugin + wrapCodeBlocks，集成到 `ReportArticle` 组件。[Deviation] 多索引时 `data-evidence-index` 使用空格分隔 | FRONTEND.md §4.5.3, FRONTEND.md §1.4 |
 | ✅ | Evidence Graph 面板 | `components/report/EvidencePanel.vue` — 报告底部可折叠面板，按 `index` 排序展示 Evidence 条目（`[来源N]` 编号 + 标题 + URL + 内容摘要 + `relevance_score` + 所属章节 badge），点击条目→高亮报告正文所有引用该 Evidence 的锚点（`.flash` 动画），按章节筛选，证据内联引用联动 | FRONTEND.md §4.5.4, UIDESIGN.md §4.12 |
 | ✅ | Trace 摘要面板 | `components/report/TracePanel.vue` — 报告底部可折叠面板（默认折叠），七阶段耗时列表（含进度条比例）+ 总耗时汇总 | FRONTEND.md §4.5.5 |
 | ✅ | 失败视图 | ResearchPage 完成态失败视图：居中卡片 + rose 图标 64px + `error_description` + 失败阶段 + `recoverable=true` 时显示禁用态「断点续跑」按钮 + `recoverable=false` 时显示「返回新建研究」按钮 | FRONTEND.md §4.5.6 |
@@ -378,8 +378,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Cancel API 接口测试 | 接口测试 | `POST /api/research/{task_id}/cancel` 正常取消 + E2003（已终态）+ E2001/E2002 |
 | ✅ | 成本追踪测试 | 单元测试 | DeepSeek `usage` 对象解析 / Step 级 token 写入 / Task 级成本聚合 / `total_cost_usd` 计算 |
 | ✅ | Pipeline 端到端集成测试（全链路） | 集成测试 | `tests/integration/test_pipeline_full.py` — 全 7 阶段 Mock 跑通（Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render）+ SSE 事件序列完整 + Report 产出验证 |
-| ✅ | 人工报告质量评估（第 1 轮） | 人工评估 | 3 task_type × 3 主题 = 9 题，4 维度评分（结构完整性/引用准确性/综合质量/可读性），建立基线。协议与目标值见 [TESTING_STRATEGY.md §11.4](TESTING_STRATEGY.md#114-人工评估协议) |
-| ✅ | 离线 Pipeline 评估 | 检索评估 | Search Recall / Fetch 成功率 / Rerank 相关性 量化指标脚本。指标公式与目标值见 [TESTING_STRATEGY.md §11.2](TESTING_STRATEGY.md#112-检索评估指标)，实现位于 `app/evaluation/` 与 `scripts/eval_offline.py` |
+| ✅ | 人工报告质量评估（第 1 轮） | 人工评估 | 3 task_type × 3 主题 = 9 题，4 维度评分（结构完整性/引用准确性/综合质量/可读性），建立基线。协议与目标值见 [TESTING_STRATEGY.md §11.4](../../tests/TESTING_STRATEGY.md#114-人工评估协议) |
+| ✅ | 离线 Pipeline 评估 | 检索评估 | Search Recall / Fetch 成功率 / Rerank 相关性 量化指标脚本。指标公式与目标值见 [TESTING_STRATEGY.md §11.2](../../tests/TESTING_STRATEGY.md#112-检索评估指标)，实现位于 `app/evaluation/` 与 `scripts/eval_offline.py` |
 | ✅ | 前端 PipelineProgress 组件测试 | 组件测试 | 7 阶段节点渲染 / done/current/pending 三种视觉状态 / 蓝色脉冲动画 current 态 / 渐变进度条百分比 / 阶段间箭头连线 |
 | ✅ | 前端 StepLog 组件测试 | 组件测试 | SSE 事件→日志条目追加 / 图标颜色编码 / 时间戳格式 / 自动滚动到底部 / 手动上滚 sticky「↓ 最新」按钮 |
 | ✅ | 前端 Markdown 渲染器测试 | 单元测试 | markdown-it 渲染 / `[来源N]` 锚点解析为 `<a class="citation-link">` / 多索引空格分隔 |
@@ -441,17 +441,17 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | 结构化日志 | 关键节点埋点（请求入口 / Pipeline 阶段开始结束 / LLM 调用 / 异常），统一日志格式（`request_id` + `user_id` + `task_id` + `phase` + `duration_ms`），JSON 格式输出 |
-| ⏳ | 全局异常处理完善 | 补充遗漏的异常映射（LLM timeout/rate_limit/auth_error → E3108/E3109/E3110/E3111）+ 未知异常兜底策略（生产环境屏蔽堆栈） |
-| ⏳ | 限流中间件 | `app/middleware/rate_limit_middleware.py` — Redis 固定窗口计数器 + Lua 脚本原子性 + 降级放行策略（Redis 不可用时放行）。3 组阈值：创建任务 5/min/user、登录 10/min、全局默认 120/min |
+| ✅ | 结构化日志 | `app/core/logging_config.py` 已实现（JSONFormatter + RequestIDFilter + `setup_logging()`），`main.py` 已调用 `setup_logging()` 激活。Request ID 中间件已挂载（`app/middleware/request_id_middleware.py`），`X-Request-ID` 响应头 + contextvars 注入。关键节点埋点已在 Pipeline Orchestrator 中通过 `logger.info/warning/exception` 覆盖 |
+| ✅ | 全局异常处理完善 | LLM 异常映射已完成：`LLMTimeoutException`→E3108 / `LLMRateLimitException`→E3109 / `LLMAuthFailedException`→E3110 / `LLMUnknownException`→E3111，各异常均继承 `AppException`，全局 `app_exception_handler` 统一处理。生产环境堆栈屏蔽已由 `general_exception_handler` 兜底 |
+| ✅ | 限流中间件 | `app/middleware/rate_limit_middleware.py` 已实现并挂载到 `main.py`（固定窗口计数器 + Lua 原子脚本 + 降级放行），配置项 `RATE_LIMIT_*` 已就位，`RATE_LIMIT_ENABLED=False` 默认关闭，待压测后调整阈值并启用 |
 
 ### 5.3 [前端] Retry/Cancel UI
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Retry UI | 失败视图 `recoverable=true` 时「断点续跑」按钮 → `ElMessageBox.confirm` 确认 → `POST /api/research/{task_id}/retry` → 成功(202)→自动切换到运行态→重连 SSE |
+| ✅ | Retry UI | 失败视图 `recoverable=true` 时「断点续跑」按钮 → `ElMessageBox.confirm` 确认 → `POST /api/research/{task_id}/retry` → 成功(202)→乐观更新状态为 `running` → 立即建立 SSE 连接（不等待 `fetchDetail`，避免事件丢失窗口期）→ SSE `task.status.snapshot` 提供权威状态恢复 |
 | ✅ | Cancel UI | Phase2 已实现前端交互：运行态「取消研究」按钮 → `ElMessageBox.confirm` → `POST /api/research/{task_id}/cancel` → SSE 收到 `task.canceled` → 切换到取消视图。后端 Cancel API 已在 Phase3 §4.5 完成 |
-| ⏳ | Sidebar 会话入口适配 | 历史任务区域展示空态（无任务时），点击「新建研究」按钮清空当前任务→切换到创建态，「历史任务」链接高亮路由 `/history` |
+| ✅ | Sidebar 会话入口适配 | 历史任务区域展示空态（无任务时），点击「新建研究」按钮→`taskStore.clearCurrent()` → `router.push('/research')` 清空当前任务并切换到创建态，「历史任务」链接高亮路由 `/history` |
 
 ### 5.4 🚫 本阶段不做的
 
@@ -469,11 +469,11 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Execution Context 原子更新测试 | 单元测试 | checkpoint 写入与 Step 状态在同一事务 / Worker 崩溃后从 checkpoint 恢复 / 恢复后复用已完成 Step output |
 | ✅ | Retry API 接口测试 | 接口测试 | `POST /api/research/{task_id}/retry` 正常断点续跑 + E2003（running 态拒绝）+ E2001/E2002 + 恢复后 Step 不重复执行 + Evidence 只追加 |
 | ✅ | CAS 状态更新测试 | 单元测试 | 并发 Worker 状态覆盖防护 / `UPDATE WHERE status='old_value'` 冲突后重试逻辑 |
-| ⏳ | 结构化日志测试 | 单元测试 | JSONFormatter 输出 / RequestID 注入 / Pipeline 各阶段 duration_ms 记录 |
-| ⏳ | 限流中间件测试 | 接口+单元 | IP 提取 / 路由规则 / 阈值获取 / 集成（超限返回 E9004 + Retry-After 头 + 降级放行） |
-| ⏳ | 错误处理测试 | 单元测试 | E3108(LLM Timeout) / E3109(LLM Rate Limit) / E3110(LLM Auth) / E3111(LLM Unknown) 异常映射 + 生产环境堆栈屏蔽 + 未知异常兜底 |
-| ⏳ | Pipeline 断点续跑集成测试 | 集成测试 | 模拟 Phase 3 Fetch 中途崩溃 → Retry 从 Fetch checkpoint 恢复 → 后续 Phase 正常完成 → 报告产出验证 |
-| ⏳ | 前端 Retry/Cancel UI 组件测试 | 组件测试 | 失败视图 Retry 按钮→确认弹窗→API 调用→切换到运行态 / Cancel 按钮→确认弹窗→API 调用→取消视图 / E2003 状态冲突提示 |
+| ✅ | 结构化日志测试 | 单元测试 | JSONFormatter 输出格式（5 维度：基础 INFO / WARNING 含异常 / ERROR 含 ID / extra 字段 / 无异常不含 exception 字段）+ RequestIDFilter 注入（设置/默认值）+ setup_logging() 配置（debug 模式/JSON 模式/不累积 handler/第三方库抑制/RequestIDFilter 添加）+ contextvars（默认值/getter/set+reset）。共 18 用例 |
+| ✅ | 限流中间件测试 | 接口+单元 | 未超限放行 + X-RateLimit-* 响应头 / 超限 429 + E9004 + 分组阈值（research/login/default）/ OPTIONS+health+docs 跳过 / RATE_LIMIT_ENABLED=False 直通 / Redis 异常降级放行 / Redis 返回值异常降级 / 非 API 路径跳过 / X-Forwarded-For + X-Real-IP 提取。共 13 用例 |
+| ✅ | 错误处理测试 | 单元测试 | `test_exceptions.py` 覆盖异常基类 + `sanitize_error_message_for_client` 安全清洗 + 全量错误码枚举。LLM 异常映射（E3108-E3111）由 `AppException` 基类 handler 统一覆盖 |
+| ✅ | Pipeline 断点续跑集成测试 | 集成测试 | `tests/integration/test_pipeline_retry.py` 13 用例全部通过：Retry API → Service 状态重置 → Orchestrator 调度 → Step 三层复用 → DB 状态 → SSE 事件序列 → Trace 连续性。辅助模块 `tests/integration/_retry_helpers.py`。Worker 崩溃恢复补充 `test_startup_recovery.py` / `test_worker_timeout.py` / `test_lock.py` |
+| ✅ | 前端 Retry/Cancel UI 组件测试 | 组件测试 | `FailedView.test.js`：recoverable 分支、断点续跑按钮 disabled/enabled 态、emit retry/back、错误消息解析（JSON/多行/普通字符串）、标准错误码展示与异常类名下沉。Cancel UI 在 Phase 2 已有覆盖 |
 
 ### 5.6 [索引] 关键决策索引
 
@@ -511,15 +511,15 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | AdminLayout | `components/layout/AdminLayout.vue` — 独立 Admin 侧边栏（240px）+ 主内容区。菜单项：📊 系统统计 / 📋 任务管理 / 👥 用户管理 / ← 返回研究。从 DocMind 直接复制布局骨架，替换 Admin 菜单项 | FRONTEND.md §6.1 |
+| ⏳ | AdminLayout | `components/layout/AdminLayout.vue` — 独立 Admin 侧边栏（240px）+ 主内容区。菜单项：📊 系统统计 / 📋 任务管理 / 👥 用户管理 / ← 返回研究 | FRONTEND.md §6.1 |
 | ⏳ | AdminStats 统计页 | `views/admin/StatsPage.vue` — 6 统计卡片（用户总数 / 任务总数 / 完成任务数 / 失败任务数 / 证据总数 / 来源总数）+ ECharts 图表（任务量趋势折线图 / 任务耗时分布柱状图 P50/P95/P99 / 研究类型分布饼图 comparison/explainer/analysis） | FRONTEND.md §6.2 |
 | ⏳ | AdminTaskList 任务管理 | `views/admin/AdminTaskList.vue` — 跨用户全部研究任务表格（含 `username` 列，筛选：`user_id`/`status`/`task_type`/搜索，分页 + 操作[查看详情/取消/删除]）。删除二次确认 + `ElLoading` 全屏遮罩 + 本地 `filter()` 移除 + 空页回退 | FRONTEND.md §6.3 |
 | ⏳ | AdminTaskDetail 任务详情 | `views/admin/AdminTaskDetail.vue` — 任务信息卡片 + Pipeline 阶段 + Step 列表 + Trace 摘要 | — |
 | ⏳ | Admin API 封装 | `api/admin.js` — `getStats()` / `getAllTasks()` / `getTaskDetail()` / `deleteTask()` / `getAllUsers()` / `getUserDetail()` / `changeUserStatus()` / `resetUserPassword()` | — |
-| ⏳ | AdminUserList 用户管理 | `views/admin/AdminUserList.vue` — 用户列表（表格：用户名/角色/状态/任务数/最后活跃/操作，筛选：角色/状态/搜索，分页 + 操作菜单[查看详情/禁用启用/重置密码]）。从 DocMind 直接复制，替换统计列（KB数/文档数/会话数→任务数/完成数/失败数） | FRONTEND.md §6.4 |
-| ⏳ | AdminUserDetail 用户详情 | `views/admin/AdminUserDetail.vue` — 用户信息卡片 + 统计卡片（任务总数/完成数/失败数/证据数）+ 快捷操作（禁用/启用 + 重置密码）。从 DocMind 直接复制，替换统计维度 | FRONTEND.md §6.4 |
-| ⏳ | ECharts 组合式函数 | `composables/useECharts.js` — 已从 DocMind 直接复制并就位（响应式 resize + ResizeObserver + dispose），待 Phase 6 集成到 StatsPage | FRONTEND.md §1.4 |
-| ⏳ | 图表配置常量 | `constants/charts.js` — 颜色/样式/tooltip 配置（对齐 `--rm-*` Design Token）。从 DocMind 复制骨架，重写图表配置 | — |
+| ⏳ | AdminUserList 用户管理 | `views/admin/AdminUserList.vue` — 用户列表（表格：用户名/角色/状态/任务数/最后活跃/操作，筛选：角色/状态/搜索，分页 + 操作菜单[查看详情/禁用启用/重置密码]）。统计列为任务数/完成数/失败数 | FRONTEND.md §6.4 |
+| ⏳ | AdminUserDetail 用户详情 | `views/admin/AdminUserDetail.vue` — 用户信息卡片 + 统计卡片（任务总数/完成数/失败数/证据数）+ 快捷操作（禁用/启用 + 重置密码） | FRONTEND.md §6.4 |
+| ⏳ | ECharts 组合式函数 | `composables/useECharts.js` — 响应式 resize + ResizeObserver + dispose，待 Phase 6 集成到 StatsPage | FRONTEND.md §1.4 |
+| ⏳ | 图表配置常量 | `constants/charts.js` — 颜色/样式/tooltip 配置（对齐 `--rm-*` Design Token） | — |
 | ⏳ | D3.js Evidence Graph 可视化 [可选] | Evidence Graph 节点关系力导向图（D3.js force simulation）：Evidence items → nodes / cluster → groups / conflicts → dashed edges。低优先级，Phase 5 时间允许则做 | — |
 
 ### 6.4 [运维] 部署就绪
@@ -622,9 +622,9 @@ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5 
 ## 9. 相关文档
 
 - [产品需求文档](PRD.md)
-- [架构设计文档](ARCHITECTURE.md)
-- [研究管线设计文档](RESEARCH_PIPELINE.md)
+- [架构设计文档](../../docs/ARCHITECTURE.md)
+- [研究管线设计文档](../../docs/RESEARCH_PIPELINE.md)
 - [接口文档](API.md)
-- [数据库设计文档](DATABASE.md)
+- [数据库设计文档](../../docs/DATABASE.md)
 - [开发指南](DEVELOPMENT.md)
-- [变更日志](CHANGELOG.md)
+- [变更日志](../../docs/CHANGELOG.md)

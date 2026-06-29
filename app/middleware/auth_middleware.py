@@ -2,9 +2,9 @@
 
 使用纯 ASGI 中间件（非 BaseHTTPMiddleware），以便正确返回 JSON 错误响应。
 
-[Deviation] 相比 docmind 的 auth_middleware.py：
-- 错误码从 DocMind E5004 → ResearchMind E1004
-- detail 从扁平字符串 → 结构化 JSON 对象（error_type + error_description）
+[Deviation] ResearchMind 认证中间件设计：
+- 错误码使用 E1004
+- detail 为结构化 JSON 对象（error_type + error_description）
 """
 
 from starlette.requests import Request

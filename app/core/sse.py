@@ -1,9 +1,6 @@
 """SSE 工具 — Server-Sent Events 格式化与心跳机制
 
-从 DocMind 复制传输层框架，Phase 2-3 替换全部事件类型。
-
-DocMind 侧（问答 SSE）：
-- 6 种事件类型：meta / thinking / message / sources / finish / error
+传输层框架（Phase 2-3 替换全部事件类型）。
 
 ResearchMind 侧（Pipeline SSE，Phase 2-3 实现）：
 - 15 种事件类型（v1.0）：task.* / phase.* / step.* / checkpoint.* + 2 种预留 [v2]

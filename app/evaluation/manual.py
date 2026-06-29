@@ -1,7 +1,7 @@
 """人工评估记录处理
 
 提供人工评估 JSON 记录的校验、加载、聚合与轮次对比。
-协议定义见 docs/TESTING_STRATEGY.md §11.4。
+协议定义见 tests/TESTING_STRATEGY.md §11.4。
 """
 
 import json

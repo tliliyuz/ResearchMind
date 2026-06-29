@@ -1,11 +1,11 @@
 """
 ORM 模型共享类型与工具函数。
 
-- UTCDateTime：TypeDecorator，ORM 层确保读写均带 UTC tzinfo（对齐 docmind `models/_types.py`）
+- UTCDateTime：TypeDecorator，ORM 层确保读写均带 UTC tzinfo
 - utcnow()：返回当前 UTC aware datetime（供 Python 侧 default 使用，与 UTCDateTime 兼容）
 - new_uuid()：生成 UUID4 字符串（CHAR(36) 格式）
 
-集中定义避免在各模型文件中重复。时区方案对齐 docmind：
+集中定义避免在各模型文件中重复。时区方案：
 - MySQL DATETIME 列不存储时区，驱动返回 naive datetime
 - UTCDateTime 在 ORM 层完成 aware ↔ naive 双向转换：
   - 写入：astimezone(UTC) + replace(tzinfo=None) → DB 存 UTC naive

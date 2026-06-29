@@ -1,6 +1,6 @@
 """Alembic 迁移环境 —— 异步引擎 + 自动发现模型。
 
-复刻自 docmind `backend/alembic/env.py`：
+迁移环境要点：
 - 在线模式复用 app.config.settings.database_url（aiomysql 异步串），与运行时统一驱动
 - target_metadata 指向 Base.metadata，通过导入 app.models 触发全部表注册
 """

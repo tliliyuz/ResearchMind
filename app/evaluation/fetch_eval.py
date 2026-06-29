@@ -1,7 +1,7 @@
 """Fetch 阶段离线评估
 
 从 Fetch Step 的 output 中提取每个 URL 的抓取状态，计算 Fetch Success Rate。
-安全拦截 URL 单独统计，不计入分母。指标定义见 docs/TESTING_STRATEGY.md §11.2.2。
+安全拦截 URL 单独统计，不计入分母。指标定义见 tests/TESTING_STRATEGY.md §11.2.2。
 """
 
 from collections import Counter

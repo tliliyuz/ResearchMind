@@ -1,7 +1,7 @@
 """BM25 关键词检索器 — 轻量版（纯内存计算，~60 行）
 
 对齐 INFRASTRUCTURE_REUSE.md §4.1：
-- 不复用 DocMind 的 ~686 行版（含 Redis L1/L2 缓存 + MySQL 懒加载 + 章节 boost）
+- 轻量版（纯内存计算，~60 行），不含 Redis L1/L2 缓存 + MySQL 懒加载 + 章节 boost
 - ResearchMind 场景：15 篇文档 × 段落切分 ≈ 最多 45 候选，纯内存计算即可
 - 仅保留核心：BM25Okapi + jieba.lcut
 

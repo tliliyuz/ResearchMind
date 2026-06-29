@@ -16,8 +16,8 @@
 `app/models/_types.py` 中的 `UTCDateTime` TypeDecorator 在 ORM 层完成 aware ↔ naive 双向转换——写入时转为 UTC 并剥离 tzinfo 存 naive UTC，读取时附加 UTC tzinfo 返回 aware datetime。Pydantic 收到 aware datetime 后自动序列化为 `2026-06-19T10:00:00+00:00`。前端 `new Date(isoString)` 自动转换为本地时区显示。底层列依然是 `DATETIME`，不需要数据迁移。
 
 - **列类型**：所有时间列声明为 `UTCDateTime`（底层 `DATETIME`，MySQL 不存储时区）
-- **服务端默认值**：`created_at` / `updated_at` 使用 `CURRENT_TIMESTAMP`（连接级 `time_zone='+00:00'` 保证其为 UTC），**禁止** `(UTC_TIMESTAMP())`——其在 `ON UPDATE` 子句中需额外括号易致语法错误，且与 docmind 统一
-- **updated_at 自动更新**：由 ORM 层 `onupdate=func.current_timestamp()` 维护（经 service/ORM 发起的 UPDATE 自动刷新）；DDL 层不再声明 `ON UPDATE` 子句，对齐 docmind 模型层实现
+- **服务端默认值**：`created_at` / `updated_at` 使用 `CURRENT_TIMESTAMP`（连接级 `time_zone='+00:00'` 保证其为 UTC），**禁止** `(UTC_TIMESTAMP())`——其在 `ON UPDATE` 子句中需额外括号易致语法错误
+- **updated_at 自动更新**：由 ORM 层 `onupdate=func.current_timestamp()` 维护（经 service/ORM 发起的 UPDATE 自动刷新）；DDL 层不再声明 `ON UPDATE` 子句
 - **连接时区**：`core/database.py` 连接建立钩子执行 `SET time_zone='+00:00'`
 
 ---
@@ -363,7 +363,7 @@ CREATE TABLE section_evidence (
 
 ### 2.8 刷新令牌表 `refresh_tokens`
 
-> 配合 Refresh Token 机制（见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)），持久化存储刷新令牌哈希，支持 Rotation 与泄露检测。设计复用 DocMind 的 JWT 基础设施。
+> 配合 Refresh Token 机制（见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)），持久化存储刷新令牌哈希，支持 Rotation 与泄露检测。基于 ResearchMind 自有 JWT 基础设施。
 
 ```sql
 CREATE TABLE refresh_tokens (

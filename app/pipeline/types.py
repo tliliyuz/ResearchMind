@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 class SearchResult:
     """标准化检索结果，多路搜索源共用。
 
-    对应 DocMind 的 RetrievalResult，适配 ResearchMind 的 web 搜索场景：
+    适配 ResearchMind 的 web 搜索场景：
     - 无 doc_id / chunk_index（ResearchMind 无文档库概念）
     - source_id 指向 research_sources.id
     - matched_sentence / matched_sentence_score 由 sentence_matcher 填充
@@ -30,8 +30,7 @@ class SearchResult:
 class SearchOutput:
     """检索输出聚合，多路搜索融合的输入/输出类型。
 
-    对应 DocMind 的 RetrievalOutput，去掉 stats（DocMind KB 检索性能统计）
-    和 doc_name/section_title 等文档库特有字段。
+    不含 stats（KB 检索性能统计）和 doc_name/section_title 等文档库特有字段。
     """
     results: list[SearchResult] = field(default_factory=list)
     total: int = 0

@@ -8,9 +8,9 @@
 
 纯 ASGI 中间件（与 AuthMiddleware 同级），不使用 BaseHTTPMiddleware。
 
-> **复用到 ResearchMind**：从 DocMind 复制，接口组映射调整：
-> - `chat` → `research`（POST /api/research）
-> - 移除 `upload`（ResearchMind 无文档上传）
+> **ResearchMind 接口组**：
+> - `research`（POST /api/research）
+> - 无 `upload`（ResearchMind 无文档上传）
 > - 保留 `login` / `default`
 """
 
