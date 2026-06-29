@@ -324,3 +324,100 @@ class TestFatalStepErrorCodes:
         assert "E3105" not in RECOVERABLE_STEP_ERROR_CODES
         assert "E3106" not in RECOVERABLE_STEP_ERROR_CODES
         assert "E3110" not in RECOVERABLE_STEP_ERROR_CODES
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase-Aware 状态推导（Agent Runtime / 断点续跑）
+# ═══════════════════════════════════════════════════════════════
+
+
+def _make_phase_step(step_type: str, status="completed", error_code=None, error_message=None):
+    """创建携带 phase 信息的模拟 ResearchStep。"""
+    step = MagicMock()
+    step.step_type = step_type
+    step.status = status
+    step.error_code = error_code
+    step.error_message = error_message
+    return step
+
+
+class TestPhaseAwareResolver:
+    """针对 Agent Runtime 与断点续跑场景的 phase-aware 推导。"""
+
+    def setup_method(self):
+        self.resolver = TaskStateResolver()
+
+    def test_所有phase完成_存在同phase非终态重复step_仍返回completed(self):
+        """已完成 phase 中的 pending/running 重复 Step（如 Agent Runtime 遗留）不应阻塞 completed。"""
+        task = _make_task()
+        steps = [
+            _make_phase_step("planning", "completed"),
+            _make_phase_step("search", "completed"),
+            _make_phase_step("fetch", "completed"),
+            _make_phase_step("rerank", "completed"),
+            _make_phase_step("synthesis", "completed"),
+            _make_phase_step("evidence_graph", "completed"),
+            _make_phase_step("render", "completed"),
+            # Agent Runtime 遗留的重复 render step，尚未进入终态
+            _make_phase_step("render", "pending"),
+        ]
+        status, err = self.resolver.resolve(task, steps, evidence_count=10)
+        assert status == "completed"
+        assert err is None
+
+    def test_AgentRuntime中途_仅部分phase有step_返回running(self):
+        """Agent Runtime 尚未推进到全部 phase 时，保持 running。"""
+        task = _make_task()
+        steps = [_make_phase_step("planning", "completed")]
+        status, err = self.resolver.resolve(task, steps, evidence_count=0)
+        assert status == "running"
+        assert err is None
+
+    def test_未completed_phase存在pending_step_返回running(self):
+        """尚有未 completed 的 phase 存在非终态 Step → 继续运行。"""
+        task = _make_task()
+        steps = [
+            _make_phase_step("planning", "completed"),
+            _make_phase_step("search", "completed"),
+            _make_phase_step("fetch", "completed"),
+            _make_phase_step("rerank", "completed"),
+            _make_phase_step("synthesis", "completed"),
+            _make_phase_step("evidence_graph", "completed"),
+            _make_phase_step("render", "running"),
+        ]
+        status, err = self.resolver.resolve(task, steps, evidence_count=10)
+        assert status == "running"
+        assert err is None
+
+    def test_旧Pipeline存在skipped_phase_证据充足_返回partially_completed(self):
+        """旧任务存在未实现的 skipped phase，但其余 phase 完成且证据充足 → partially_completed。"""
+        task = _make_task(max_sources=10)  # min_evidence=5
+        steps = [
+            _make_phase_step("planning", "completed"),
+            _make_phase_step("search", "completed"),
+            _make_phase_step("fetch", "completed"),
+            _make_phase_step("rerank", "completed"),
+            _make_phase_step("synthesis", "completed"),
+            _make_phase_step("evidence_graph", "skipped"),
+            _make_phase_step("render", "completed"),
+        ]
+        status, err = self.resolver.resolve(task, steps, evidence_count=5)
+        assert status == "partially_completed"
+        assert err is None
+
+    def test_旧Pipeline存在skipped_phase_证据不足_返回failed_E3103(self):
+        """skipped phase 导致无法完成全部 7 phase 且证据不足 → failed。"""
+        task = _make_task(max_sources=10)
+        steps = [
+            _make_phase_step("planning", "completed"),
+            _make_phase_step("search", "completed"),
+            _make_phase_step("fetch", "completed"),
+            _make_phase_step("rerank", "completed"),
+            _make_phase_step("synthesis", "completed"),
+            _make_phase_step("evidence_graph", "skipped"),
+            _make_phase_step("render", "completed"),
+        ]
+        status, err = self.resolver.resolve(task, steps, evidence_count=0)
+        assert status == "failed"
+        assert err is not None
+        assert err["error_code"] == "E3103"

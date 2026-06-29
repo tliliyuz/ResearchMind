@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     PIPELINE_RERANK_MAX_RETRIES: int = 2
     PIPELINE_RENDER_MAX_RETRIES: int = 1
 
+    # ── Agent Runtime ──
+    USE_AGENT_RUNTIME: bool = True
+    MAX_AGENT_ITERATIONS: int = 30
+    AGENT_WORKING_MEMORY_MAX_ENTRIES: int = 20
+
     # ── SSE ──
     SSE_HEARTBEAT_INTERVAL: int = 15
 

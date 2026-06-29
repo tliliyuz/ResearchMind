@@ -11,10 +11,11 @@
 """
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -25,6 +26,7 @@ from app.core.exceptions import (
     LLMTimeoutException,
     LLMUnknownException,
 )
+from app.tools.base import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ class LLMResult:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    tool_calls: list[ToolCall] | None = None
 
 
 def _get_llm_client() -> AsyncOpenAI:
@@ -207,18 +210,43 @@ async def stream_chat_completion(
     raise last_exc_type(detail="LLM 流式调用重试耗尽")
 
 
+def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall] | None:
+    """将 OpenAI 返回的 tool_calls 解析为 ToolCall 列表。
+
+    参数可能是 None / 列表 / 可迭代对象；每个元素含 id / function.name / function.arguments。
+    """
+    if not raw_tool_calls:
+        return None
+
+    parsed: list[ToolCall] = []
+    for tc in raw_tool_calls:
+        try:
+            tc_id = getattr(tc, "id", None) or ""
+            function = getattr(tc, "function", None) or {}
+            name = function.get("name") if isinstance(function, dict) else getattr(function, "name", None)
+            arguments_str = function.get("arguments") if isinstance(function, dict) else getattr(function, "arguments", "{}")
+            arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else (arguments_str or {})
+            parsed.append(ToolCall(id=str(tc_id), name=str(name), arguments=arguments))
+        except Exception:
+            logger.warning("解析 tool_call 失败，跳过: %s", tc)
+            continue
+    return parsed if parsed else None
+
+
 # ── 非流式调用 ───────────────────────────────────────────
 
 
 async def chat_completion(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     deep_thinking: bool = False,
     reasoning_effort: str = "high",
     max_tokens: int | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
 ) -> LLMResult:
-    """非流式调用 LLM chat/completions（用于 Planning / Synthesis / Rerank 等场景）。
+    """非流式调用 LLM chat/completions（用于 Planning / Synthesis / Rerank / Agent 等场景）。
 
     Args:
         messages: OpenAI 格式的消息列表
@@ -226,9 +254,11 @@ async def chat_completion(
         reasoning_effort: 推理强度
         max_tokens: 最大输出 token 数（None 时使用模型默认值）
         model: 模型名称（None 时使用 settings.LLM_FLASH_MODEL，适合轻量任务）
+        tools: OpenAI Function Calling 工具定义列表
+        tool_choice: 工具选择策略（"auto" / "none" / {"type":"function",...}）
 
     Returns:
-        LLMResult: 包含 content、reasoning_content、token 使用量
+        LLMResult: 包含 content、reasoning_content、token 使用量、tool_calls
 
     Raises:
         LLMUnknownException: 调用返回未预期错误（重试耗尽后）
@@ -238,7 +268,7 @@ async def chat_completion(
 
     thinking_type = "enabled" if deep_thinking else "disabled"
     extra_body = {"thinking": {"type": thinking_type}}
-    request_kwargs = {
+    request_kwargs: dict[str, Any] = {
         "model": llm_model,
         "messages": messages,
         "stream": False,
@@ -250,6 +280,10 @@ async def chat_completion(
         request_kwargs["max_tokens"] = max_tokens
     if temperature is not None:
         request_kwargs["temperature"] = temperature
+    if tools:
+        request_kwargs["tools"] = tools
+    if tool_choice is not None:
+        request_kwargs["tool_choice"] = tool_choice
 
     last_exc_type = LLMUnknownException
     for attempt in range(1, 4):
@@ -264,17 +298,21 @@ async def chat_completion(
                 raise LLMUnknownException(detail="LLM 返回空结果")
 
             choice = response.choices[0]
-            content = choice.message.content or ""
-            reasoning_content = getattr(choice.message, "reasoning_content", "") or ""
+            message = choice.message
+            content = message.content or ""
+            reasoning_content = getattr(message, "reasoning_content", "") or ""
 
             usage = response.usage
             prompt_tokens = usage.prompt_tokens if usage else 0
             completion_tokens = usage.completion_tokens if usage else 0
             total_tokens = usage.total_tokens if usage else 0
 
+            tool_calls = _parse_tool_calls(message.tool_calls)
+
             logger.info(
-                "LLM_PERF(非流式) api=%.3fs prompt_tok=%d completion_tok=%d",
+                "LLM_PERF(非流式) api=%.3fs prompt_tok=%d completion_tok=%d tool_calls=%d",
                 t_api - t0, prompt_tokens, completion_tokens,
+                len(tool_calls) if tool_calls else 0,
             )
 
             return LLMResult(
@@ -283,6 +321,7 @@ async def chat_completion(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                tool_calls=tool_calls,
             )
 
         except (LLMUnknownException, LLMAuthFailedException):

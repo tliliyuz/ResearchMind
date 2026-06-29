@@ -53,6 +53,10 @@ EVENT_STEP_FAILED = "step.failed"
 EVENT_STEP_SKIPPED = "step.skipped"
 EVENT_CHECKPOINT_SAVED = "checkpoint.saved"
 
+EVENT_AGENT_THOUGHT = "agent.thought"
+EVENT_AGENT_ACTION = "agent.action"
+EVENT_AGENT_OBSERVATION = "agent.observation"
+
 # [v2] 预留
 # EVENT_TASK_PAUSED = "task.paused"
 # EVENT_TASK_RESUMED = "task.resumed"

@@ -20,6 +20,9 @@ import math
 from typing import Any
 
 from app.core.exceptions import sanitize_error_message_for_client
+from app.models.enums import STEP_TYPE_ENUM
+
+PHASE_ORDER = list(STEP_TYPE_ENUM)
 
 # ── 致命停止（FATAL）的 Step 错误码 ────────────────────────────
 # 这些错误一旦发生，Pipeline 立即停止，Task 判定 FAILED。
@@ -93,15 +96,37 @@ class TaskStateResolver:
         if fatal_result:
             return "failed", fatal_result
 
-        # 2. 检查是否所有 Step 已完成
-        if self._all_steps_terminal(steps):
+        # 2. 是否携带 phase 信息
+        has_phase_info = any(
+            getattr(s, "step_type", None) in PHASE_ORDER for s in steps
+        )
+
+        if not has_phase_info:
+            # 旧测试 / 旧数据：没有 step_type 时回退到原行为
+            if not self._all_steps_terminal(steps):
+                return task.status, None
             if self._all_non_skipped_completed(steps):
                 return "completed", None
-            # 部分完成 → Evidence Threshold 判定
             return self._evaluate_partial_completion(task, evidence_count)
 
-        # 还有 Step 未终态 → 不应调用 resolve（调用方应等待全部 Step 终态）
-        return task.status, None
+        # 3. 携带 phase 信息：区分「phase 未开始」「phase 已尝试但未完成」「已完成 phase 的重复 Step」
+        completed_phases = self._get_completed_phases(steps)
+        if completed_phases == set(PHASE_ORDER):
+            return "completed", None
+
+        attempted_phases = self._get_attempted_phases(steps)
+        if attempted_phases != set(PHASE_ORDER):
+            # 还有 phase 完全未产生 Step → 仍在运行中（Agent Runtime 中途 / Pipeline 未执行完）
+            return task.status, None
+
+        # 所有 phase 都已产生 Step，但部分 phase 没有 completed Step（failed / skipped）
+        # 只有「未 completed phase」中的非终态 Step 才会阻塞；已完成 phase 的重复 Step 忽略
+        blocking = self._blocking_uncompleted_steps(steps, completed_phases)
+        if blocking:
+            return task.status, None
+
+        # 4. 到达终态但未能完成全部 7 phase → Evidence Threshold 判定
+        return self._evaluate_partial_completion(task, evidence_count)
 
     # ── 内部方法 ────────────────────────────────────────────────
 
@@ -124,6 +149,24 @@ class TaskStateResolver:
         return None
 
     @staticmethod
+    def _get_completed_phases(steps: list[Any]) -> set[str]:
+        """返回所有存在 completed Step 的 phase 集合。"""
+        return {
+            s.step_type
+            for s in steps
+            if s.status == "completed" and s.step_type in PHASE_ORDER
+        }
+
+    @staticmethod
+    def _get_attempted_phases(steps: list[Any]) -> set[str]:
+        """返回所有已经产生 Step 的 phase 集合（无论 Step 状态）。"""
+        return {
+            s.step_type
+            for s in steps
+            if getattr(s, "step_type", None) in PHASE_ORDER
+        }
+
+    @staticmethod
     def _all_steps_terminal(steps: list[Any]) -> bool:
         """所有 Step 是否均已进入终态。
 
@@ -140,6 +183,21 @@ class TaskStateResolver:
         if not non_skipped:
             return False  # 全部 skipped → 不算 completed
         return all(s.status == "completed" for s in non_skipped)
+
+    @staticmethod
+    def _blocking_uncompleted_steps(steps: list[Any], completed_phases: set[str]) -> list[Any]:
+        """返回阻止任务进入终态的非终态 Step。
+
+        仅统计「所属 phase 尚未 completed」的 Step；
+        已完成 phase 中的非终态重复 Step（如 Agent Runtime 遗留）不阻塞。
+        """
+        terminal_statuses = {"completed", "failed", "skipped"}
+        return [
+            s for s in steps
+            if getattr(s, "step_type", None) in PHASE_ORDER
+            and s.step_type not in completed_phases
+            and s.status not in terminal_statuses
+        ]
 
     def _evaluate_partial_completion(
         self, task: Any, evidence_count: int
