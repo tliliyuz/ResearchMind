@@ -9,11 +9,11 @@
 
 > **编号规范**
 >
-> 本章子节编号格式为 `{章节号}.{序号}`，全部两级，序号连续。每个 Phase 内按「功能 → 测试 → 🚫 推迟项 → 索引」固定顺序排列。
+> 本章子节编号格式为 `{章节号}.{序号}`，全部两级，序号连续。每个 Phase 内按「功能 → 测试 → 🚫 推迟项」固定顺序排列。
 >
 > 每个子节标题标注 `[角色]` 标签，角色包括：后端 / 前端 / 数据库 / 测试 / 文档 / 运维 / 体验完善 / 管理后台 / 基础设施 / 高级功能。
 >
-> 🚫 推迟项统一编号，放在 `[测试]` 之后、`[索引]` 之前。
+> 🚫 推迟项统一编号，放在 `[测试]` 之后。
 >
 > ✅ **前端设计文档已完成**（FRONTEND.md / UIDESIGN.md），前端任务已纳入各 Phase 排期。基础设施复用快照已删除，各模块锚点已迁移至对应设计文档。
 
@@ -52,7 +52,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ✅ | 项目脚手架 | FastAPI 入口 `main.py` + `config.py` 配置单例 + 目录结构（api/services/models/schemas/core/pipeline/tasks/middleware） |
+| ✅ | 项目脚手架 | FastAPI 入口 `main.py` + `config.py` 配置单例；目录结构见 [DEVELOPMENT.md](DEVELOPMENT.md) |
 | ✅ | 依赖安装 | `requirements.txt`（fastapi / sqlalchemy[asyncio] / aiomysql / alembic / celery / redis / openai / httpx / pydantic / python-jose / passlib / python-dotenv） |
 | ✅ | Git 初始化 | `.gitignore` + 分支策略 |
 | ✅ | `.env` 配置模板 | `.env.example`：MySQL / Redis / LLM (DeepSeek) / Tavily / JWT / CORS 全部配置项 |
@@ -87,7 +87,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | JWT 认证中间件 | `app/middleware/auth_middleware.py` — ASGI 中间件，验证 Bearer Token，写入 `request.state` | 直接实现，错误码 E1004，detail 结构化 JSON |
 | ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验）/ `require_admin` | 直接实现，`get_db` 使用 `async_session_factory` 创建会话 |
 | ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` / `require_admin` 三层分离 | 直接实现，含 Task 级权限检查逻辑 |
-| ✅ | 时区策略 | `app/models/_types.py`（`UTCDateTime`）+ `app/core/database.py`（`SET time_zone='+00:00'`）+ 四层 UTC 统一 | 直接实现 `UTCDateTime` 与四层 UTC 策略（Phase 1 脚手架已提前完成） |
+| ✅ | 时区策略 | 四层 UTC 统一（MySQL → 后端 → API → 前端） | 实现细节见 [DATABASE.md §0](../../docs/DATABASE.md#0-时区约定)；`UTCDateTime` 与 `SET time_zone='+00:00'` 已就位（Phase 1 脚手架提前完成） |
 | ✅ | SSE 流式框架 | `app/core/sse.py` — 手动 `StreamingResponse` + 15s 心跳注释帧 | 保留 SSE 传输层框架，Phase 2-3 替换全部事件类型 |
 | ✅ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + Pipeline 七阶段 | 直接实现，阶段名称 Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render |
 | ✅ | BM25 核心（轻量版） | `app/pipeline/bm25.py` — `BM25Okapi` + `jieba.lcut` 核心，72 行纯内存计算 | 重写轻量版（不含三级缓存） |
@@ -115,7 +115,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 | 依赖决策 |
 |:---|:---|:---|:---|
-| ✅ | 项目脚手架 | `package.json`（Vue 3 + Vite + Pinia + Element Plus + Axios + Font Awesome + markdown-it + highlight.js + Vitest）+ `vite.config.js`（`@/` alias + proxy `/api` → `localhost:8000`）+ `index.html`（title「ResearchMind」）+ 目录结构（`api/` / `stores/` / `router/` / `views/` / `components/` / `utils/` / `styles/`） | — |
+| ✅ | 项目脚手架 | `package.json`（Vue 3 + Vite + Pinia + Element Plus + Axios + Font Awesome + markdown-it + highlight.js + Vitest）+ `vite.config.js`（`@/` alias + proxy `/api` → `localhost:8000`）+ `index.html`（title「ResearchMind」）；目录结构见 [DEVELOPMENT.md](DEVELOPMENT.md) | — |
 | ✅ | Design Token 系统 | `styles/global.css` — `--rm-*` CSS 变量全量定义（品牌色 / 语义色 / 中性色 / 字体 / 间距 / 圆角 / 阴影 / 过渡 / Element Plus 覆盖）。采用 `--rm-` 前缀全量变量定义 | UIDESIGN.md §1 |
 | ✅ | Axios 实例 + 拦截器 | `api/index.js` — Axios 实例（baseURL + 30s 超时）+ 请求拦截器（附 `Authorization: Bearer <access_token>`）+ 响应拦截器（401+E1003 → `authStore.refresh()` → 重放原请求 + `isRefreshing` 并发防抖 + `scheduleRefresh` 定时器）。Token 过期错误码 E1003 | FRONTEND.md §1.3 |
 | ✅ | Auth API 封装 | `api/auth.js` — `login()` / `register()` / `refresh()` / `logout()` / `changePassword()` 五个函数 | FRONTEND.md §3 |
@@ -258,21 +258,21 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 测试类型 | 说明 |
 |:---|:---|:---|:---|
-| ✅ | 研究任务 CRUD API 接口测试 | 接口测试 | POST `/api/research` 正常创建(201) + topic 超长(422) + task_type 非法(422) + 缺少 requirements(422)；GET 列表（空列表/分页/status 筛选/按 created_at DESC）；GET 详情（含完整字段/错误信息/progress/E2001/E2002/admin 审计）；DELETE（正常删除/级联清理步骤/不存在 E2001/无权 E2002）；未登录 401。共 27 用例 |
-| ✅ | TaskStateResolver 测试 | 单元测试 | FATAL→FAILED / all COMPLETED→COMPLETED / 部分完成含充分证据→PARTIALLY_COMPLETED / 部分完成证据不足→FAILED(E3103) / all SKIPPED→FAILED / 空步骤保持原状态 / 未终态不触发推导。共 19 用例 |
-| ✅ | 研究任务 Schema 校验测试 | 单元测试 | `ResearchCreateRequest` topic 长度/纯空格/task_type 枚举/depth 枚举/max_sources 范围/language 默认值 / `ProgressSchema` progress 范围/边界值。共 21 用例 |
-| ✅ | 研究任务 Service 单元测试 | 单元测试 | `create_task` 正常创建+DB 写入+首个 planning step+三种 task_type+requirements 存储+用户隔离+topic 超长 422 / `get_task_list` 空列表/单条/多条 DESC/分页第一页+第二页+超出范围/status 筛选/用户隔离/page_size 上限 100/page 自动修正 / `get_task_detail` 完整字段/running 含 phase/failed 含错误/execution_context 优先/fallback 统计列/进度为 0 / `delete_task` 删除后不存在/级联删除步骤/仅删除指定任务。共 27 用例 |
+| ✅ | 研究任务 CRUD API 接口测试 | 接口测试 | POST `/api/research` 正常创建(201) + topic 超长(422) + task_type 非法(422) + 缺少 requirements(422)；GET 列表（空列表/分页/status 筛选/按 created_at DESC）；GET 详情（含完整字段/错误信息/progress/E2001/E2002/admin 审计）；DELETE（正常删除/级联清理步骤/不存在 E2001/无权 E2002）；未登录 401 |
+| ✅ | TaskStateResolver 测试 | 单元测试 | FATAL→FAILED / all COMPLETED→COMPLETED / 部分完成含充分证据→PARTIALLY_COMPLETED / 部分完成证据不足→FAILED(E3103) / all SKIPPED→FAILED / 空步骤保持原状态 / 未终态不触发推导 |
+| ✅ | 研究任务 Schema 校验测试 | 单元测试 | `ResearchCreateRequest` topic 长度/纯空格/task_type 枚举/depth 枚举/max_sources 范围/language 默认值 / `ProgressSchema` progress 范围/边界值 |
+| ✅ | 研究任务 Service 单元测试 | 单元测试 | `create_task` 正常创建+DB 写入+首个 planning step+三种 task_type+requirements 存储+用户隔离+topic 超长 422 / `get_task_list` 空列表/单条/多条 DESC/分页第一页+第二页+超出范围/status 筛选/用户隔离/page_size 上限 100/page 自动修正 / `get_task_detail` 完整字段/running 含 phase/failed 含错误/execution_context 优先/fallback 统计列/进度为 0 / `delete_task` 删除后不存在/级联删除步骤/仅删除指定任务 |
 | ✅ | Planner 单元测试 | 单元测试 | LLM 调用 Mock：正常拆解（3-5 SubQuestions）/ 输出校验失败重试 / 3 次重试耗尽→E3101 / task_type 策略注入验证（3 种 × Prompt 含策略段落） |
 | ✅ | Searcher 单元测试 | 单元测试 | Tavily API Mock：正常搜索 / 单子问题 0 结果→SKIPPED / API 失败重试→恢复 / 重试耗尽→SKIPPED / 全失败→E3102 / 跨子问题 URL 去重 / 总结果>25 截断 |
 | ✅ | Fetcher 单元测试 | 单元测试 | HTTP Mock：正常抓取+正文提取 / 超时重试→恢复 / 403→直接 SKIPPED / DNS 失败→SKIPPED / SSRF 防护（内网 IP 拒绝）/ 正文为空→SKIPPED |
 | ✅ | SSE 事件流测试 | 单元测试 | `StreamingResponse` 事件序列 / 15 种事件 type 格式校验 / 15s 心跳帧 / `seq` 递增 / 重连 snapshot 数据结构 |
-| ✅ | Celery 幂等锁测试 | 单元测试 | Redis `SET NX` 获取锁 / 已存在拒绝 / TTL 过期后重新获取 / 阶段完成后释放 / 异步版 acquire/release。共 19 用例 |
+| ✅ | Celery 幂等锁测试 | 单元测试 | Redis `SET NX` 获取锁 / 已存在拒绝 / TTL 过期后重新获取 / 阶段完成后释放 / 异步版 acquire/release |
 | ✅ | Pipeline 端到端集成测试（前半段） | 集成测试 | Planning→Search→Fetch 三阶段 Mock 全链路 + SSE 事件序列完整 + Fetch 结果持久化验证 |
-| ✅ | 前端 ResearchPage 创建态组件测试 | 组件测试 | 表单渲染 / topic 字数校验（>500字符拒绝）/ task_type 卡片选中高亮 / 高级选项折叠展开 / 提交 loading / 快捷示例卡片点击填入 / 提交成功切换到运行态。共 15 用例 |
-| ✅ | 前端 TypeCard 组件测试 | 组件测试 | 三卡渲染 / 点击选中（border-teal-600 + bg-teal-50）/ 三选一互斥 / 再次点击取消。共 13 用例 |
-| ✅ | 前端 HistoryPage 组件测试 | 组件测试 | 表格渲染 / 状态筛选 / 搜索防抖 / 分页 / 空状态 + 引导按钮 / 点击行加载任务 / 删除确认→行移除→空页回退。共 13 用例 |
-| ✅ | 前端 SSE 解析工具测试 | 单元测试 | `sse.js` 各 event 类型解析 / 注释帧跳过 / buffer 分割 / 异常格式容错 / 多行 data 拼接。共 18 用例 |
-| ✅ | 前端 TaskStore 测试 | 单元测试 | `create()` → `current` 更新 → SSE 自动连接 / `fetchList()` 分页 / `cancel()` → SSE 断开 / `sseStatus` 5 态流转。共 27 用例 |
+| ✅ | 前端 ResearchPage 创建态组件测试 | 组件测试 | 表单渲染 / topic 字数校验（>500字符拒绝）/ task_type 卡片选中高亮 / 高级选项折叠展开 / 提交 loading / 快捷示例卡片点击填入 / 提交成功切换到运行态 |
+| ✅ | 前端 TypeCard 组件测试 | 组件测试 | 三卡渲染 / 点击选中（border-teal-600 + bg-teal-50）/ 三选一互斥 / 再次点击取消 |
+| ✅ | 前端 HistoryPage 组件测试 | 组件测试 | 表格渲染 / 状态筛选 / 搜索防抖 / 分页 / 空状态 + 引导按钮 / 点击行加载任务 / 删除确认→行移除→空页回退 |
+| ✅ | 前端 SSE 解析工具测试 | 单元测试 | `sse.js` 各 event 类型解析 / 注释帧跳过 / buffer 分割 / 异常格式容错 / 多行 data 拼接 |
+| ✅ | 前端 TaskStore 测试 | 单元测试 | `create()` → `current` 更新 → SSE 自动连接 / `fetchList()` 分页 / `cancel()` → SSE 断开 / `sseStatus` 5 态流转 |
 
 ---
 
@@ -374,7 +374,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 |:---|:---|:---|:---|
 | ✅ | BM25 粗筛测试 | 单元测试 | BM25Okapi 初始化 / jieba 分词 / 段落级评分 / top-3 选取 / 候选总数上限 45 / 空文档处理 |
 | ✅ | LLM Rerank 测试 | 单元测试 | DeepSeek API Mock：正常评分 / task_type 加权维度验证（3 种）/ 无效 JSON 重试 / 重试耗尽→E3105 / 分数范围 0-10 校验 |
-| ✅ | Synthesis 单元测试 | 单元测试 | DeepSeek API Mock：观点聚类 / 共识识别 / 冲突检测 / 信息缺口 / 无效 JSON 重试 / 重试耗尽→E3104 / 空 evidence→E3104 / max_sources 截断 / task_type 注入 / 越界索引过滤 / conflicts null→空数组。共 10 用例 |
+| ✅ | Synthesis 单元测试 | 单元测试 | DeepSeek API Mock：观点聚类 / 共识识别 / 冲突检测 / 信息缺口 / 无效 JSON 重试 / 重试耗尽→E3104 / 空 evidence→E3104 / max_sources 截断 / task_type 注入 / 越界索引过滤 / conflicts null→空数组 |
 | ✅ | Evidence Graph Build 测试 | 单元测试 | 数据导入完整性 / items 排序 / cluster 写回 / sources 聚合 / 空输入处理 / E3106 触发条件 |
 | ✅ | Report Render 测试 | 单元测试 | 模板选择（3 种 task_type）/ LLM 渲染 Mock / `[来源N]` 正则提取 / `sources[]` 去重排序 / 引用缺失标记 / E3107 |
 | ✅ | Report API 接口测试 | 接口测试 | `GET /api/research/{task_id}/report` 完整 JSON 结构校验（`report.sections[]` + `evidence_graph` + `trace`）+ E2001/E2002/E2003 |
@@ -390,38 +390,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | 前端 EvidencePanel 组件测试 | 组件测试 | Evidence 条目按 index 排序 / 点击条目→emit select / 锚点高亮 `.flash` 动画 / 按章节筛选 |
 | ✅ | 前端 ResearchPage 状态切换集成测试 | 组件测试 | 运行态渲染 RunningHeader/PipelineProgress/StepLog + 完成态→ReportViewer + 失败态→FailedView + 取消态→CanceledView |
 | ✅ | 前端 SSE 重连测试 | 单元测试 | 模拟断连→自动重连→状态恢复 connected / 重试耗尽→error 态 |
-
-### 4.10 [索引] 关键决策索引
-
-| # | 决策 | 文档位置 |
-|:---|:---|:---|
-| 1 | 创建任务 → `commit()` → `task.delay()` 时序（避免竞态窗口） | ARCHITECTURE.md §3.3 |
-| 2 | 任务列表：仅当前用户，按 `created_at DESC`，分页+status 筛选 | API.md §3.1 |
-| 3 | 任务详情：`progress` 从 `execution_context.progress` 提取，前端不直接访问 `execution_context` | API.md §3.1 |
-| 4 | 任务删除：FK CASCADE 级联清理全部派生数据 | DATABASE.md §4 |
-| 5 | TaskStateResolver：禁止 Task 自身直接写入状态，统一由 Resolver 推导 | ARCHITECTURE.md §3.7 |
-| 6 | 权限两层分离：`require_task_accessible`（资源归属）+ `require_admin`（系统角色） | ARCHITECTURE.md §4 |
-| 7 | Pipeline Orchestrator 负责阶段调度 + Execution Context 原子更新 | ARCHITECTURE.md §3.3 |
-| 8 | SSE Bridge：Redis Pub/Sub 桥接 Celery Worker ↔ FastAPI ↔ SSE Stream | RESEARCH_PIPELINE.md §9 |
-| 9 | Planning：deepseek-v4-pro + `deep_thinking=True` + `temperature=0.3` | RESEARCH_PIPELINE.md §2.5 |
-| 10 | Planner 输出校验：3-5 SubQuestions + ≤200 字符 + ≥2 实体 → 3 次重试 | RESEARCH_PIPELINE.md §2.6 |
-| 11 | `task_type` 策略注入：Planning Prompt 运行时注入对应策略段落 | RESEARCH_PIPELINE.md §2.4 |
-| 12 | Search：Tavily `advanced` + 5 results/sub_question + 去重后上限 25 | RESEARCH_PIPELINE.md §3.2 |
-| 13 | Search 失败：单个 SKIPPED（不致命）/ 全部失败→E3102（致命） | RESEARCH_PIPELINE.md §3.4 |
-| 14 | Fetch 安全：协议白名单 + IP 黑名单 SSRF 防护 + 15s 超时 | RESEARCH_PIPELINE.md §4.4 |
-| 15 | Fetch 失败：403/404/DNS 不重试直接 SKIPPED / 超时重试 1 次 | RESEARCH_PIPELINE.md §4.5 |
-| 16 | SSE 15 种事件类型（v1.0）+ 2 种预留 [v2]：task.* / phase.* / step.* / checkpoint | API.md §4.1 |
-| 17 | SSE 实现：手动 `StreamingResponse`（非 sse-starlette）+ 15s 心跳 | API.md §4 |
-| 18 | SSE 重连恢复：`task.status.snapshot` 立即推送完整状态快照 | API.md §4.2 |
-| 19 | BM25 Stage 1：纯内存计算 ~50ms，零 API 成本，45 候选上限 | RESEARCH_PIPELINE.md §5.3 |
-| 20 | LLM Rerank Stage 2：DeepSeek API 打分 + `task_type` 加权维度 | RESEARCH_PIPELINE.md §5.4 |
-| 21 | Rerank Prompt：四维评分（相关性 40% + 信息量 30% + 权威性 15% + task_type 维度 15%） | RESEARCH_PIPELINE.md §5.4 |
-| 22 | Synthesis：deepseek-v4-pro + `deep_thinking=True` + `temperature=0.3` | RESEARCH_PIPELINE.md §6.4 |
-| 23 | Synthesis 输入截断：最多 `max_sources` 条 + 单条 ≤1500 字符 | RESEARCH_PIPELINE.md §6.3 |
-| 24 | Evidence Graph Build：纯程序化，不调用 LLM——核心认知资产不受 LLM 随机性影响 | RESEARCH_PIPELINE.md §7 |
-| 25 | Render：`deep_thinking=False` + `temperature=0.5`，报告质量靠模板约束 | RESEARCH_PIPELINE.md §8.6 |
-| 26 | 报告模板：3 种 task_type → 3 种 Section 组织方式 | RESEARCH_PIPELINE.md §8.2 |
-| 27 | 引用锚点：`[来源N]` 正则提取 → 去重排序 → 填充 `section.sources[]` → 写 `section_evidence` | RESEARCH_PIPELINE.md §8.4 |
 
 ---
 
@@ -472,21 +440,11 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Execution Context 原子更新测试 | 单元测试 | checkpoint 写入与 Step 状态在同一事务 / Worker 崩溃后从 checkpoint 恢复 / 恢复后复用已完成 Step output |
 | ✅ | Retry API 接口测试 | 接口测试 | `POST /api/research/{task_id}/retry` 正常断点续跑 + E2003（running 态拒绝）+ E2001/E2002 + 恢复后 Step 不重复执行 + Evidence 只追加 |
 | ✅ | CAS 状态更新测试 | 单元测试 | 并发 Worker 状态覆盖防护 / `UPDATE WHERE status='old_value'` 冲突后重试逻辑 |
-| ✅ | 结构化日志测试 | 单元测试 | JSONFormatter 输出格式（5 维度：基础 INFO / WARNING 含异常 / ERROR 含 ID / extra 字段 / 无异常不含 exception 字段）+ RequestIDFilter 注入（设置/默认值）+ setup_logging() 配置（debug 模式/JSON 模式/不累积 handler/第三方库抑制/RequestIDFilter 添加）+ contextvars（默认值/getter/set+reset）。共 18 用例 |
-| ✅ | 限流中间件测试 | 接口+单元 | 未超限放行 + X-RateLimit-* 响应头 / 超限 429 + E9004 + 分组阈值（research/login/default）/ OPTIONS+health+docs 跳过 / RATE_LIMIT_ENABLED=False 直通 / Redis 异常降级放行 / Redis 返回值异常降级 / 非 API 路径跳过 / X-Forwarded-For + X-Real-IP 提取。共 13 用例 |
+| ✅ | 结构化日志测试 | 单元测试 | JSONFormatter 输出格式（5 维度：基础 INFO / WARNING 含异常 / ERROR 含 ID / extra 字段 / 无异常不含 exception 字段）+ RequestIDFilter 注入（设置/默认值）+ setup_logging() 配置（debug 模式/JSON 模式/不累积 handler/第三方库抑制/RequestIDFilter 添加）+ contextvars（默认值/getter/set+reset） |
+| ✅ | 限流中间件测试 | 接口+单元 | 未超限放行 + X-RateLimit-* 响应头 / 超限 429 + E9004 + 分组阈值（research/login/default）/ OPTIONS+health+docs 跳过 / RATE_LIMIT_ENABLED=False 直通 / Redis 异常降级放行 / Redis 返回值异常降级 / 非 API 路径跳过 / X-Forwarded-For + X-Real-IP 提取 |
 | ✅ | 错误处理测试 | 单元测试 | `test_exceptions.py` 覆盖异常基类 + `sanitize_error_message_for_client` 安全清洗 + 全量错误码枚举。LLM 异常映射（E3108-E3111）由 `AppException` 基类 handler 统一覆盖 |
 | ✅ | Pipeline 断点续跑集成测试 | 集成测试 | `tests/integration/test_pipeline_retry.py` 13 用例全部通过：Retry API → Service 状态重置 → Orchestrator 调度 → Step 三层复用 → DB 状态 → SSE 事件序列 → Trace 连续性。辅助模块 `tests/integration/_retry_helpers.py`。Worker 崩溃恢复补充 `test_startup_recovery.py` / `test_worker_timeout.py` / `test_lock.py` |
 | ✅ | 前端 Retry/Cancel UI 组件测试 | 组件测试 | `FailedView.test.js`：recoverable 分支、断点续跑按钮 disabled/enabled 态、emit retry/back、错误消息解析（JSON/多行/普通字符串）、标准错误码展示与异常类名下沉。Cancel UI 在 Phase 2 已有覆盖 |
-
-### 5.6 [索引] 关键决策索引
-
-| # | 决策 | 文档位置 |
-|:---|:---|:---|
-| 28 | Execution Context：每个 Step 完成后原子更新，与 Step 状态在同一事务 | ARCHITECTURE.md §3.3 |
-| 29 | Checkpoint 保存时机：每 Phase 完成后 + 每个 Fetch URL 后 + Synthesis 后 | RESEARCH_PIPELINE.md §10.3 |
-| 30 | Retry：从 `last_completed_step_id` 的下一个 Step 恢复，复用已完成 output | ARCHITECTURE.md §3.3 |
-| 31 | CAS 状态更新：`WHERE status = 'old_value'`，并发 Worker 防覆盖 | ARCHITECTURE.md §5.7 |
-| 32 | 限流阈值：创建任务 5/min/user → E9004 / 登录 10/min → E1012 / 全局默认 120/min → E9004。压测后调整 | API.md §1.4 |
 
 ---
 
@@ -561,30 +519,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | `WorkingMemory` / `AgentMemoryService` 单元测试 | 单元测试 | FIFO 淘汰 / pending 队列 / DB 加载 / entry_type 推导 |
 | ✅ | `AgentRuntime` 集成测试 | 集成测试 | 端到端 Phase-Locked Loop / SSE 事件序列 / DB Step 与 `agent_memory_entries` 一致性 / 断点续跑恢复 |
 | ✅ | Prompt 内容测试 | 单元测试 | system prompt 包含 phase 顺序、当前 phase、主工具、memory_tool 限制 |
-
-### 6.7 [索引] 关键决策索引
-
-| # | 决策 | 文档位置 |
-|:---|:---|:---|
-| 33 | Phase-Locked ReAct：保留七阶段顺序，每阶段内 LLM 自主调用 Tool | ARCHITECTURE.md §2.3.1 |
-| 34 | `PhaseController` 负责 phase 推进与可用 Tool 过滤 | ARCHITECTURE.md §2.3.1 |
-| 35 | `MAX_AGENT_ITERATIONS=30` 作为 Loop 失控兜底 | ARCHITECTURE.md §2.3.1 |
-| 36 | Tool / LLM 异常记录 observation 后继续，不立即终止任务 | ARCHITECTURE.md §2.3.1 |
-| 37 | 断点续跑从 `agent_context` + `agent_memory_entries` 恢复 | ARCHITECTURE.md §2.3.3 |
-| 38 | Tool 抽象采用 MCP 风格 Protocol | ARCHITECTURE.md §2.3.2 |
-| 39 | `ToolRegistry` 统一负责 schema 生成与查找 | ARCHITECTURE.md §2.3.2 |
-| 40 | 9 个 Tool：7 phase + finish + memory | ARCHITECTURE.md §2.3.2 |
-| 41 | 轻量 JSON Schema 参数校验（类型 + 必填） | ARCHITECTURE.md §2.3.2 |
-| 42 | `PhaseHandlerTool` 薄适配器，不改既有 handler | ARCHITECTURE.md §2.3.2 |
-| 43 | PhaseController 过滤 Tool，越权调用返回错误 observation | ARCHITECTURE.md §2.3.2 |
-| 44 | `ReActEntry` 统一记录 Thought / Action / Observation / Finish | ARCHITECTURE.md §2.3.3 |
-| 45 | `agent_memory_entries` 表结构与索引 | DATABASE.md §2.9 |
-| 46 | `AGENT_WORKING_MEMORY_MAX_ENTRIES=20` FIFO 淘汰 | ARCHITECTURE.md §2.3.3 |
-| 47 | `AgentMemoryService` 提供异步持久化 API | ARCHITECTURE.md §2.3.3 |
-| 48 | Pending-Queue 模式：AgentRuntime 统一 flush | ARCHITECTURE.md §2.3.3 |
-| 49 | `agent.thought` SSE 事件 | API.md §4.1 |
-| 50 | `agent.action` SSE 事件 | API.md §4.1 |
-| 51 | `agent.observation` SSE 事件 | API.md §4.1 |
 
 ---
 
@@ -662,14 +596,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ⏳ | 全量回归测试 | 回归测试 | 遍历完整测试集（前端组件 + 后端接口 + Pipeline 集成 + 断点续跑 + 3 种 task_type） |
 | ⏳ | 压测 | 性能测试 | Locust 4 场景（基准/日常/峰值/极限），P50≤2min / P99≤4min。压测完成后据此调整限流阈值 |
 
-### 7.7 [索引] 关键决策索引
-
-| # | 决策 | 文档位置 |
-|:---|:---|:---|
-| 52 | Admin 权限：仅 `require_admin` 可访问管理后台接口 | ARCHITECTURE.md §4 |
-| 53 | Trace 数据写入 `research_tasks.trace` JSON 列 | ARCHITECTURE.md §5.9 |
-| 54 | 统计图表按天聚合 + P50/P95/P99 分位数 | API.md §3.5 |
-
 ---
 
 ## 8. Phase 7：迭代优化（不设时限）
@@ -708,22 +634,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 ### 8.4 [高级功能] Agent 演进路线（v1.5 / v2.0）
 
-> Agent Runtime Phase 4-7 作为高级功能排入本路线，不阻塞 v1.0 上线，按需求优先级逐个实现。
-
-| 版本 | Agent 阶段 | 映射 | 核心能力 | 优先级 |
-|:---|:---|:---|:---|:---|
-| v1.5 | Phase 4 | Dynamic Planning | 执行中根据搜索结果动态调整 SubQuestions；允许新增/合并/删除子问题 | P1 |
-| v1.5 | Phase 5 | Reflection | 每个 Phase 完成后自我反思：评估证据充分性、识别偏见、决定是否需要补充检索 | P1 |
-| v2.0 | Phase 6 | Long Memory | 跨任务共享记忆：用户偏好、领域知识、历史研究结论；支持任务间经验复用 | P2 |
-| v2.0 | Phase 7 | Multi-Agent | 多 Agent 协作：Planner / Searcher / Critic / Writer 等角色分工，通过消息总线协同 | P2 |
-
-**与现有 Phase 7 其他高级功能的关系**：
-
-- §8.1 的 `Paragraph → Evidence Spans`、`focus_areas` / `exclude_domains` / `time_range`、`SearXNG 降级`、`多报告模板` 等是 v1.5 证据层与产品层升级，与 Dynamic Planning / Reflection 可并行开发。
-- §8.2 的 `真 DAG 并行调度`、`Claim 级 Evidence Graph`、`递归分解`、`分级 LLM` 等是 v2.0 架构层升级，与 Long Memory / Multi-Agent 可并行开发。
-- Agent 演进路线不替代现有 Pipeline 七阶段业务语义，而是增强 Agent 的自主规划、反思、记忆与协作能力。
-
-> 权威设计见 [ARCHITECTURE.md §2.3](../../docs/ARCHITECTURE.md#23-agent-runtime-核心机制)。决策记录：`docs/decisions/ADR-004.md`。
+Agent Runtime Phase 4-7 作为高级功能排入本路线，不阻塞 v1.0 上线，按需求优先级逐个实现。具体阶段映射（Dynamic Planning / Reflection / Long Memory / Multi-Agent）、版本规划与架构说明见 [ARCHITECTURE.md §2.3](../../docs/ARCHITECTURE.md#23-agent-runtime-核心机制)；决策记录见 [ADR-004.md](../../docs/decisions/ADR-004.md)。本排期文档不再重复展开。
 
 ---
 
@@ -755,4 +666,5 @@ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5 
 - [接口文档](API.md)
 - [数据库设计文档](../../docs/DATABASE.md)
 - [开发指南](DEVELOPMENT.md)
+- [决策索引](../../docs/decisions/INDEX.md)
 - [变更日志](../../docs/CHANGELOG.md)

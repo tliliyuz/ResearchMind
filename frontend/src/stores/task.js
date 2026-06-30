@@ -632,6 +632,61 @@ export const useTaskStore = defineStore('task', () => {
         }
         break
 
+      case 'agent.thought': {
+        if (!current.value) break
+        const thought = data.thought || ''
+        appendLog({
+          type: 'agent',
+          icon: 'fa-brain',
+          level: 'info',
+          message: thought ? `思考：${_truncateText(thought, 200)}` : 'Agent 思考中…',
+          fullContent: thought,
+          phase: normalizePhaseKey(data.phase),
+          iteration: data.iteration,
+          timestamp: data.timestamp,
+        })
+        break
+      }
+
+      case 'agent.action': {
+        if (!current.value) break
+        const toolName = data.tool_name || 'tool'
+        const argsText = _formatJsonBrief(data.arguments)
+        appendLog({
+          type: 'agent',
+          icon: 'fa-terminal',
+          level: 'info',
+          message: `调用 ${toolName}(${argsText})`,
+          toolName,
+          args: data.arguments,
+          phase: normalizePhaseKey(data.phase),
+          iteration: data.iteration,
+          timestamp: data.timestamp,
+        })
+        break
+      }
+
+      case 'agent.observation': {
+        if (!current.value) break
+        const toolName = data.tool_name || 'tool'
+        const observation = data.observation || ''
+        appendLog({
+          type: 'agent',
+          icon: 'fa-eye',
+          level: data.success === false ? 'warning' : 'info',
+          message: observation
+            ? `${toolName} 结果：${_truncateText(observation, 200)}`
+            : `${toolName} 执行完成`,
+          fullContent: observation,
+          toolName,
+          success: data.success,
+          phase: normalizePhaseKey(data.phase),
+          iteration: data.iteration,
+          timestamp: data.timestamp,
+        })
+        break
+      }
+
       case 'phase.started': {
         if (!current.value) break
         const shortPhase = normalizePhaseKey(data.phase)
@@ -822,7 +877,7 @@ export const useTaskStore = defineStore('task', () => {
   // ========== 日志辅助函数 ==========
 
   /**
-   * 向 stepLogs 追加一条系统/阶段/警告日志
+   * 向 stepLogs 追加一条系统/阶段/警告/Agent 日志
    */
   function appendLog(log) {
     stepLogs.value.push({
@@ -832,6 +887,7 @@ export const useTaskStore = defineStore('task', () => {
       level: log.level || 'info',
       message: log.message || '',
       timestamp: log.timestamp || new Date().toISOString(),
+      ...log,
     })
   }
 
@@ -934,6 +990,28 @@ export const useTaskStore = defineStore('task', () => {
     if (free) return free[0]
 
     return null
+  }
+
+  /**
+   * 截断文本，超出长度时追加省略号
+   */
+  function _truncateText(text, maxLength) {
+    if (!text) return ''
+    if (text.length <= maxLength) return text
+    return `${text.slice(0, maxLength)}…`
+  }
+
+  /**
+   * 将对象格式化为简短单行 JSON，用于日志展示
+   */
+  function _formatJsonBrief(value, maxLength = 120) {
+    if (value == null) return ''
+    try {
+      const json = JSON.stringify(value)
+      return _truncateText(json, maxLength)
+    } catch {
+      return String(value)
+    }
   }
 
   /**

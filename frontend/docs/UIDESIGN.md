@@ -1820,21 +1820,7 @@ input[type="range"].styled-slider::-webkit-slider-thumb {
 
 ## 8. Element Plus 主题覆盖
 
-```css
-/* styles/element-override.css */
-:root {
-    --el-color-primary: #0F766E;
-    --el-color-primary-light-3: #14B8A6;
-    --el-color-primary-light-5: #5EEAD4;
-    --el-color-primary-light-7: #99F6E4;
-    --el-color-primary-light-8: #CCFBF1;
-    --el-color-primary-light-9: #F0FDFA;
-    --el-border-radius-base: 8px;
-    --el-font-size-base: 14px;
-    --el-font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI",
-                      Roboto, "Helvetica Neue", Arial, sans-serif;
-}
-```
+Element Plus 变量覆盖的权威定义见 [§1 CSS 变量定义](#1-css-变量定义完整-design-token) 末尾的「Element Plus 主题覆盖」代码块。本节仅保留使用方式说明。
 
 ### 使用方式
 

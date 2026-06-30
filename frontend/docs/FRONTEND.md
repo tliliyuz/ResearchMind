@@ -99,7 +99,7 @@
 |:---|:---|:---|:---|
 | 格式化工具 | `utils/format.js` | `formatDateTime()` / `formatBytes()` / `formatRelativeTime()` / `formatNumber()` / `formatDuration()` | ResearchMind 实现，含 `formatNumber`/`formatDuration` |
 | Markdown 渲染 | `utils/markdown.js` | `renderMarkdown()` / `wrapCodeBlocks()` + `[来源N]` 引用锚点 plugin | ResearchMind 实现，含引用锚点解析 |
-| SSE 解析 | `utils/sse.js` | fetch + ReadableStream + 15 种事件解析（v1.0）+ 2 种预留 [v2] + 5 态连接状态机（Phase 2+ 实现） | ResearchMind SSE 解析框架，15 种事件处理器 |
+| SSE 解析 | `utils/sse.js` | fetch + ReadableStream + 18 种事件解析（v1.0）+ 2 种预留 [v2] + 5 态连接状态机（Phase 2+ 实现） | ResearchMind SSE 解析框架，18 种事件处理器 |
 | ECharts 封装 | `composables/useECharts.js` | `useECharts()` — 响应式 resize + dispose + `setOption` 暂存 | ResearchMind 实现，零改动 |
 
 ---
@@ -453,6 +453,9 @@ POST /api/research { topic, requirements: { task_type, depth: "quick", max_sourc
 > - 后端 `step.started` SSE 事件携带 `timestamp`，运行态日志与快照恢复日志时间来源一致。
 | `step.failed` | `{label} — 失败：{error_type}` | `fa-exclamation-triangle` |
 | `step.skipped` | `{label} — 已跳过：{reason}` | `fa-fast-forward` |
+| `agent.thought` | `思考：{thought}`（内容过长时截断，hover 显示完整） | `fa-brain` |
+| `agent.action` | `调用 {tool_name}({arguments})` | `fa-terminal` |
+| `agent.observation` | `{tool_name} 结果：{observation}` | `fa-eye` |
 | `checkpoint.saved` | `已保存进度` | `fa-save` |
 | `task.warning` | `警告：{error_description}` | `fa-exclamation-triangle` |
 | `task.completed` | `研究完成！共 18 个参考来源` | `fa-trophy` |
@@ -460,6 +463,8 @@ POST /api/research { topic, requirements: { task_type, depth: "quick", max_sourc
 | `task.canceled` | `研究已取消` | `fa-ban` |
 
 日志面板自动滚动到底部，用户手动上滚时显示「↓ 最新」浮动按钮。
+
+**Agent 事件说明**：`agent.thought` / `agent.action` / `agent.observation` 由 Agent Runtime 在 ReAct Loop 中发布，仅追加到运行态日志，不修改 `current.status`、不推进 `phaseStates`、不影响 `progress`。`agent.thought` 的 `thought` 字段可能较长，前端存储 `fullContent` 供 tooltip 展示，日志行展示截断后的摘要。
 
 #### 4.4.4 取消研究
 
@@ -918,6 +923,9 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 |:---|:---|:---|
 | `task.created` | Worker 拾取任务 | 切换到运行态，初始化进度 UI |
 | `task.status.snapshot` | 首次连接 / 断连重连 | 用快照数据恢复完整进度 UI（阶段状态 + Step 列表 + 进度条）。断点续跑场景下 `current_phase` 为 null 时，从已完成 `steps` 数组重建 `phaseStates`，使已完成阶段显示 ✅ 图标而非全部灰色 |
+| `agent.thought` | LLM 返回 reasoning_content | 追加 Agent 思考日志，`message` 截断为 200 字符并追加省略号，完整内容存入 `fullContent` 供 tooltip 展示；不修改任务状态与进度 |
+| `agent.action` | LLM 发起 Tool 调用 | 追加 Agent 动作日志：`调用 {tool_name}({arguments})`；`tool_name` / `arguments` 同时存入日志对象供组件展示 |
+| `agent.observation` | Tool 执行完成并返回 observation | 追加 Agent 观察日志：`{tool_name} 结果：{observation}`；`success=false` 时日志 level 为 `warning`，否则为 `info` |
 | `phase.started` | 进入新 Pipeline 阶段 | 阶段进度条：当前阶段高亮（蓝色脉冲），已完成阶段标记 ✅ |
 | `phase.completed` | 当前阶段所有 Step 完成 | 阶段进度条：当前阶段标记 ✅ + 标注耗时 |
 | `step.started` | Step 开始执行 | 日志区追加条目（蓝色图标 `fa-spinner fa-spin`） |
@@ -960,8 +968,8 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 
 | 维度 | ResearchMind |
 |:---|:---|
-| 事件数量 | 17 种 + 注释帧 |
-| 核心事件 | `phase.* / step.* / task.* / checkpoint.*` |
+| 事件数量 | 20 种 + 注释帧 |
+| 核心事件 | `phase.* / step.* / task.* / checkpoint.* / agent.*` |
 | 数据方向 | Pipeline 阶段进度事件流 |
 | 完成事件 | `task.completed`（含 trace 摘要） → 前端再调 report API |
 | 失败事件 | `task.failed`（含 recoverable + last_checkpoint） |
@@ -992,7 +1000,7 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 | 布局框架 | AppLayout + AdminLayout + Sidebar |
 | 设计系统 | `--rm-*` CSS 变量 |
 | 核心页面 | ResearchPage（任务提交+进度+报告） |
-| SSE 协议 | 15 种事件 v1.0 + 2 种预留 [v2]（Pipeline 进度流） |
+| SSE 协议 | 18 种事件 v1.0 + 2 种预留 [v2]（Pipeline 进度流 + Agent ReAct 事件） |
 | 状态管理 | auth / task / report |
 | 管理后台 | 任务/用户管理 + 统计 |
 | Markdown 渲染 | 研究报告渲染 |

@@ -330,4 +330,103 @@ describe('TaskStore — SSE 事件处理（Phase 3 运行态）', () => {
     expect(store.current.status).toBe('canceled')
     expect(store.sseStatus).toBe('disconnected')
   })
+
+  it('agent.thought 追加思考日志并截断内容', () => {
+    const store = makeStore()
+    const longThought = 'a'.repeat(300)
+    store.handleSSEEvent('agent.thought', {
+      iteration: 2,
+      phase: 'searching',
+      thought: longThought,
+      timestamp: '2026-06-24T10:00:07Z',
+    })
+
+    expect(store.stepLogs).toHaveLength(1)
+    const log = store.stepLogs[0]
+    expect(log.type).toBe('agent')
+    expect(log.icon).toBe('fa-brain')
+    expect(log.level).toBe('info')
+    expect(log.message).toContain('思考：')
+    expect(log.message.length).toBeLessThan(longThought.length)
+    expect(log.fullContent).toBe(longThought)
+    expect(log.phase).toBe('search')
+    expect(log.iteration).toBe(2)
+    expect(log.timestamp).toBe('2026-06-24T10:00:07Z')
+  })
+
+  it('agent.action 追加动作日志并保留工具参数', () => {
+    const store = makeStore()
+    store.handleSSEEvent('agent.action', {
+      iteration: 2,
+      phase: 'searching',
+      tool_call_id: 'call-001',
+      tool_name: 'search_tool',
+      arguments: { sub_question: '测试子问题' },
+      timestamp: '2026-06-24T10:00:08Z',
+    })
+
+    expect(store.stepLogs).toHaveLength(1)
+    const log = store.stepLogs[0]
+    expect(log.type).toBe('agent')
+    expect(log.icon).toBe('fa-terminal')
+    expect(log.level).toBe('info')
+    expect(log.message).toContain('search_tool')
+    expect(log.message).toContain('测试子问题')
+    expect(log.toolName).toBe('search_tool')
+    expect(log.args).toEqual({ sub_question: '测试子问题' })
+    expect(log.phase).toBe('search')
+    expect(log.iteration).toBe(2)
+  })
+
+  it('agent.observation 追加观察日志，失败时 level 为 warning', () => {
+    const store = makeStore()
+    store.handleSSEEvent('agent.observation', {
+      iteration: 2,
+      phase: 'searching',
+      tool_call_id: 'call-001',
+      tool_name: 'search_tool',
+      observation: '找到 12 条相关结果',
+      success: true,
+      timestamp: '2026-06-24T10:00:09Z',
+    })
+
+    expect(store.stepLogs).toHaveLength(1)
+    const log = store.stepLogs[0]
+    expect(log.type).toBe('agent')
+    expect(log.icon).toBe('fa-eye')
+    expect(log.level).toBe('info')
+    expect(log.message).toContain('search_tool')
+    expect(log.message).toContain('找到 12 条相关结果')
+    expect(log.toolName).toBe('search_tool')
+    expect(log.success).toBe(true)
+  })
+
+  it('agent.observation 失败时 level 为 warning', () => {
+    const store = makeStore()
+    store.handleSSEEvent('agent.observation', {
+      iteration: 2,
+      phase: 'searching',
+      tool_call_id: 'call-001',
+      tool_name: 'search_tool',
+      observation: '工具不可用',
+      success: false,
+      timestamp: '2026-06-24T10:00:09Z',
+    })
+
+    expect(store.stepLogs[0].level).toBe('warning')
+  })
+
+  it('agent.* 事件不修改任务状态、阶段和进度', () => {
+    const store = makeStore()
+    const originalPhase = store.current.current_phase
+    store.handleSSEEvent('agent.thought', { iteration: 1, phase: 'planning', thought: '思考' })
+    store.handleSSEEvent('agent.action', { iteration: 1, phase: 'planning', tool_name: 'memory_tool', arguments: {} })
+    store.handleSSEEvent('agent.observation', { iteration: 1, phase: 'planning', tool_name: 'memory_tool', observation: '完成', success: true })
+
+    expect(store.current.status).toBe('running')
+    expect(store.current.current_phase).toBe(originalPhase)
+    expect(store.progress.completed_steps).toBe(0)
+    expect(store.phaseStates.planning).toBe('pending')
+    expect(store.stepLogs).toHaveLength(3)
+  })
 })

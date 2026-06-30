@@ -5,7 +5,7 @@
 | 状态 | 已接受 |
 | 日期 | 2026-06-29 |
 | 决策人 | yuz |
-| 关联文档 | `docs/agent_design.md`、`docs/ARCHITECTURE.md`、`docs/RESEARCH_PIPELINE.md`、`resource/docs/API.md` |
+| 关联文档 | `docs/ARCHITECTURE.md`、`docs/RESEARCH_PIPELINE.md`、`resource/docs/API.md` |
 
 ## 背景
 
@@ -53,7 +53,7 @@ Phase 2 需要让 Tool System 真正可用、可注册、可验证，为 Phase 3
 
 ### 优点
 
-- Tool 数量与 schema 符合 `docs/agent_design.md §6` 的 Phase 2 目标。
+- Tool 数量与 schema 符合本 ADR 决策 1 与决策 3 的 Phase 2 目标。
 - 参数校验在 Tool 入口统一处理，避免非法参数污染 phase handler。
 - LLM 可选参数让 Agent 在每个 phase 内拥有更细粒度的表达能力。
 - `memory_tool` 为 ReAct Trace 与后续 Reflection 提供可控的内存读写接口。
@@ -66,7 +66,7 @@ Phase 2 需要让 Tool System 真正可用、可注册、可验证，为 Phase 3
 
 ## 实现偏差
 
-| 设计点（`docs/agent_design.md`） | 实际实现 | 原因 |
+| 设计点（原始计划） | 实际实现 | 原因 |
 |:---|:---|:---|
 | `memory_tool` 操作 Long Memory | 仅操作 Working Memory | Long Memory 需要 Phase 6 的持久化存储；Phase 2 先用内存级 ReAct Trace 验证接口。 |
 | `ToolContext.working_memory` 放在 `AgentContext` | `working_memory` 注入 `ToolContext`，由 `AgentRuntime` 持有 | `AgentContext` 负责状态机，`WorkingMemory` 负责记忆；解耦后更便于 Phase 3 持久化替换。 |

@@ -27,8 +27,26 @@
   - 新增 `tests/unit/agent/test_prompts.py` 覆盖 prompt 内容断言。
 
 ### Changed
+- **Agent Runtime 技术栈与项目定位文档同步**：
+  - `docs/ARCHITECTURE.md` §1 追加「Agent Runtime 技术栈」子表，覆盖 Phase-Locked ReAct Loop、`AgentRuntime`、`PhaseController`、`WorkingMemory`、`AgentContext`、Tool Protocol / `ToolRegistry` / `PhaseHandlerTool`、`finish_tool` / `memory_tool`、DeepSeek API、Agent Prompt、`agent.*` SSE 事件、循环控制、`TaskStateResolver`。
+  - `README.md` 全面重写：副标题由「Workflow Engine + LLM System」改为「Agentic Research System based on Phase-Locked ReAct」，更新系统定位、核心特性、架构图、核心链路、技术栈、项目结构与 FAQ，移除所有旧 Workflow Engine 文案。
+  - `frontend/docs/FRONTEND.md` 同步 `agent.thought` / `agent.action` / `agent.observation` SSE 事件：§4.4.3 新增三条日志条目与 Agent 事件说明；§8.4 新增三个事件处理 case；§8.5 事件数量由 17 种更新为 20 种；§10 SSE 协议由 15 种事件更新为 18 种事件；§1.4 SSE 解析事件数同步更新。
+  - `frontend/src/stores/task.js` 的 `handleSSEEvent()` 新增 `agent.thought` / `agent.action` / `agent.observation` 三个 case，仅追加日志条目，不修改任务状态、阶段或进度；新增 `_truncateText()` 与 `_formatJsonBrief()` 辅助函数；`appendLog()` 支持透传额外字段（如 `fullContent` / `toolName` / `iteration`）供 UI 展示与 tooltip。
+  - `docs/decisions/ADR-004.md` 关联文档列表补充 `README.md` 与 `frontend/docs/FRONTEND.md`，并标注文档同步已完成。
+
+### Changed
 - **文档目录重构与路径同步**：设计文档按资源类型重新归集，`docs/API.md`、`docs/PRD.md`、`docs/ROADMAP.md`、`docs/DEVELOPMENT.md` 移至 `resource/docs/`，`docs/TESTING_STRATEGY.md` 移至 `tests/TESTING_STRATEGY.md`。同步更新了 `README.md`、`CLAUDE.md`、`docs/CHANGELOG.md`、`resource/docs/ROADMAP.md`、`resource/docs/PRD.md`、`frontend/docs/FRONTEND.md` 以及 `app/evaluation/` 模块中的全部交叉引用路径，确保链接可点击、文档归属矩阵与当前目录一致。
 - **新增产品原型图引用**：在 `README.md` 与 `resource/docs/PRD.md` 中新增 `resource/prototypes/` 下 6 张原型图（登录页、研究创建页、运行态、历史列表页、报告页）的引用与说明，作为页面布局与交互流程的可视化参考。
+
+### Changed
+- **文档体系审计修复（P0 事实矛盾 + P1/P2 职责归位）**：依据 `/compact` 产出的文档体系审计报告，修复三处事实矛盾并将越界内容迁回权威文档：
+  - `README.md` 与 `frontend/docs/FRONTEND.md` 的 ECharts 版本统一为 **6**（以 FRONTEND.md 为权威源）。
+  - `docs/RESEARCH_PIPELINE.md` §5.2 的 Rerank 实现方由「Claude Rerank / Claude API」修正为 **DeepSeek LLM Rerank / DeepSeek API**，并移除「待改造」标记。
+  - `docs/decisions/ADR-001~003` 清理对已删除快照文档 `docs/agent_design.md` 的残留引用；偏差表头统一改为「设计点（原始计划）」。
+  - `docs/ARCHITECTURE.md` 瘦身：§4.3 删除权限函数代码块，改为源码/API 引用；§5.4.1 删除 Worker 崩溃恢复具体实现细节（TTL/函数名/模块路径），迁出内容合并至 `docs/RESEARCH_PIPELINE.md` §10.5；§2.3.1 删除 ReAct Loop 逐步控制流与错误恢复表，迁出内容作为 `docs/RESEARCH_PIPELINE.md` §10.6；§3.6 删除 SSE 事件表，改为引用 `resource/docs/API.md`。
+  - `resource/docs/ROADMAP.md` 职责归位：删除 §4.10/§5.6/§6.7/§7.7 共 54 条「关键决策索引」，集中迁移至新建 `docs/decisions/INDEX.md`；各 Phase 测试小节删除具体用例数量；§8.4 Agent 演进路线改为引用 `ARCHITECTURE.md` 与 `ADR-004.md`。
+  - 减少重复定义：`docs/ARCHITECTURE.md` 与 `resource/docs/ROADMAP.md` 的时区策略简化为引用 `DATABASE.md` §0；`resource/docs/ROADMAP.md` 的内联前后端目录树改为引用 `DEVELOPMENT.md`；`frontend/docs/UIDESIGN.md` §8 删除与 §1 重复的 Element Plus 主题覆盖代码块。
+  - `resource/docs/ROADMAP.md` §10 相关文档列表补充 `docs/decisions/INDEX.md` 链接。
 
 ### Fixed
 - **断点续跑后 Worker 未恢复时 task 永久卡在 `pending`**（两阶段修复）：

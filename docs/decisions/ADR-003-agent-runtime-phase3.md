@@ -5,7 +5,7 @@
 | 状态 | 已接受 |
 | 日期 | 2026-06-30 |
 | 决策人 | yuz |
-| 关联文档 | `docs/agent_design.md`、`docs/ARCHITECTURE.md`、`docs/DATABASE.md`、`resource/docs/API.md` |
+| 关联文档 | `docs/ARCHITECTURE.md`、`docs/DATABASE.md`、`resource/docs/API.md` |
 
 ## 背景
 
@@ -64,7 +64,7 @@ Phase 3 目标是为 ReAct Trace（Thought / Action / Observation / Finish）引
 
 ## 实现偏差
 
-| 设计点（`docs/agent_design.md`） | 实际实现 | 原因 |
+| 设计点（原始计划） | 实际实现 | 原因 |
 |:---|:---|:---|
 | `content` 仅保存详细内容，顶层字段冗余存储 | `content` 保存完整 `ReActEntry.to_dict()`，同时顶层保留 `iteration` / `phase` / `step_id` / `entry_type` / `created_at` | 便于按顶层字段索引与过滤，同时保留完整 JSON 便于恢复。 |
 | `parent_entry_id` 记录上一条 Entry | 未引入该字段 | Phase 3 按 iteration + created_at 顺序即可重建时间线；`parent_entry_id` 延迟到 Phase 4 动态规划需要时再引入。 |
