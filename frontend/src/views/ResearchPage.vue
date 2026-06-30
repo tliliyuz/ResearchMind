@@ -364,6 +364,9 @@ function fillExample(example) {
 
 // ===== 取消 =====
 async function handleCancel() {
+  // 乐观运行态但 task_id 尚未返回时，取消操作无意义
+  if (!taskStore.current?.task_id) return
+
   try {
     await ElMessageBox.confirm(
       '确定要取消当前研究吗？已完成的部分将保留。',

@@ -91,7 +91,7 @@ describe('TaskStore', () => {
       expect(store.sseStatus).toBe('disconnected')
     })
 
-    it('创建失败_API 异常抛出_loading 恢复', async () => {
+    it('创建失败_API 异常抛出_loading 恢复并回滚到创建态', async () => {
       researchApi.createTask.mockRejectedValue(new Error('网络错误'))
 
       const store = useTaskStore()
@@ -100,6 +100,34 @@ describe('TaskStore', () => {
       ).rejects.toThrow('网络错误')
 
       expect(store.loading).toBe(false)
+      expect(store.current).toBeNull()
+    })
+
+    it('创建 API 未返回前_已乐观进入运行态', async () => {
+      const apiDeferred = {}
+      apiDeferred.promise = new Promise((resolve) => {
+        apiDeferred.resolve = resolve
+      })
+      researchApi.createTask.mockReturnValue(apiDeferred.promise)
+
+      const store = useTaskStore()
+      const callPromise = store.createTask('量子计算的影响', {
+        task_type: 'analysis',
+        depth: 'quick',
+        max_sources: 10,
+        language: 'zh',
+      })
+
+      expect(store.current).not.toBeNull()
+      expect(store.current.status).toBe('running')
+      expect(store.current.task_id).toBeNull()
+      expect(store.progress.total_steps).toBe(7)
+
+      apiDeferred.resolve(mockApiResponse({ task_id: 'task-004', status: 'pending', created_at: '2026-06-24T10:00:00Z' }))
+      await callPromise
+
+      expect(store.current.task_id).toBe('task-004')
+      expect(store.current.status).toBe('pending')
     })
 
     it('创建成功_刷新侧边栏最近任务', async () => {

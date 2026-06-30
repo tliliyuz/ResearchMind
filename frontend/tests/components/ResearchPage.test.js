@@ -170,7 +170,7 @@ describe('ResearchPage — 创建态', () => {
 
   // ===== 提交 loading =====
 
-  it('提交中_按钮 disabled + loading spinner', async () => {
+  it('点击提交后立即进入运行态_不再阻塞在创建态', async () => {
     researchApi.createTask.mockImplementation(
       () => new Promise(() => {})
     )
@@ -183,8 +183,10 @@ describe('ResearchPage — 创建态', () => {
     await wrapper.find('.submit-btn').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.submit-btn').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.fa-spinner').exists()).toBe(true)
+    expect(wrapper.find('.running-state').exists()).toBe(true)
+    expect(wrapper.find('.create-container').exists()).toBe(false)
+    expect(wrapper.vm.submitting).toBe(true)
+    expect(wrapper.findComponent({ name: 'RunningHeader' }).exists()).toBe(true)
   })
 
   // ===== 提交成功 → 切换到运行态 =====
@@ -235,7 +237,7 @@ describe('ResearchPage — 创建态', () => {
 
   // ===== 提交异常处理 =====
 
-  it('提交失败 _ElMessage.error 显示错误信息', async () => {
+  it('提交失败 _回滚到创建态并显示错误信息', async () => {
     researchApi.createTask.mockRejectedValue({
       response: { status: 422, data: { detail: { topic: '主题不可为空' } } },
     })
@@ -250,6 +252,8 @@ describe('ResearchPage — 创建态', () => {
     await flushPromises()
 
     expect(ElMessage.error).toHaveBeenCalled()
+    expect(wrapper.find('.create-container').exists()).toBe(true)
+    expect(wrapper.find('.running-state').exists()).toBe(false)
   })
 })
 

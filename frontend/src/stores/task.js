@@ -85,6 +85,10 @@ export const useTaskStore = defineStore('task', () => {
 
   /**
    * 创建研究任务
+   *
+   * 参考 retryTask 的乐观更新策略：在 API 返回前即进入运行态，避免用户在创建态
+   * 阻塞等待后端响应 / Worker 拾取。API 失败时回滚到创建态。
+   *
    * @param {string} topic - 研究主题
    * @param {object} requirements - { task_type, depth, max_sources, language }
    * @returns {object} { task_id, status, created_at }
@@ -92,16 +96,39 @@ export const useTaskStore = defineStore('task', () => {
   async function createTask(topic, requirements) {
     loading.value = true
     try {
+      // 乐观进入运行态：页面立即切换到 Pipeline 进度视图，不再停留在创建表单
+      const nowIso = new Date().toISOString()
+      current.value = {
+        task_id: null,
+        topic,
+        status: 'running',
+        requirements,
+        current_phase: null,
+        progress: { completed_steps: 0, total_steps: 7, progress: 0 },
+        total_sources: 0,
+        total_evidence: 0,
+        error_code: null,
+        error_message: null,
+        recoverable: false,
+        created_at: nowIso,
+        started_at: nowIso,
+        completed_at: null,
+      }
+      progress.value = { completed_steps: 0, total_steps: 7, progress: 0 }
+      resetRuntimeState()
+      sseStatus.value = 'disconnected'
+
       const res = await researchApi.createTask(topic, requirements)
       const taskData = res.data.data
-      // 设置当前任务（初始状态）
+
+      // 用真实响应覆盖乐观占位
       current.value = {
         task_id: taskData.task_id,
         topic,
         status: taskData.status,
         requirements,
         current_phase: null,
-        progress: { completed_steps: 0, total_steps: 0, progress: 0 },
+        progress: { completed_steps: 0, total_steps: 7, progress: 0 },
         total_sources: 0,
         total_evidence: 0,
         error_code: null,
@@ -111,8 +138,10 @@ export const useTaskStore = defineStore('task', () => {
         started_at: null,
         completed_at: null,
       }
+      progress.value = { completed_steps: 0, total_steps: 7, progress: 0 }
       resetRuntimeState()
       sseStatus.value = 'disconnected'
+
       // 刷新侧边栏最近任务，重置到第 1 页
       try {
         await fetchList({ page: 1, page_size: 20 })
@@ -120,6 +149,10 @@ export const useTaskStore = defineStore('task', () => {
         // 非关键，静默处理
       }
       return taskData
+    } catch (err) {
+      // 创建失败：回滚到创建态，避免用户停留在假运行态
+      clearCurrent()
+      throw err
     } finally {
       loading.value = false
     }
