@@ -12,6 +12,7 @@ from app.agent.prompts import build_agent_system_prompt, build_phase_instruction
 from app.agent.state import PhaseController
 from app.config import settings
 from app.core.llm import chat_completion
+from app.metrics import emit_agent_loop_iteration
 from app.pipeline.sse_bridge import (
     EVENT_AGENT_ACTION,
     EVENT_AGENT_OBSERVATION,
@@ -64,6 +65,7 @@ class AgentLoop:
             iteration += 1
             agent_ctx.iteration_count = iteration
             current_phase = self._phase_controller.current_phase
+            iteration_phase = current_phase
 
             if current_phase is None:
                 logger.info("所有 phase 已完成，结束 Agent Loop")
@@ -179,6 +181,8 @@ class AgentLoop:
                     logger.info("所有 phase 已完成，Agent Loop 结束")
                     agent_ctx.finished = True
                     break
+
+            emit_agent_loop_iteration(iteration_phase, "iteration")
 
         if not agent_ctx.finished and iteration >= self._max_iterations:
             logger.error("Agent Loop 达到最大迭代次数: %d", self._max_iterations)

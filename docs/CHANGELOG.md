@@ -19,6 +19,32 @@
   - 代码层清理：删除 `frontend/src/views/admin/`、`frontend/src/components/layout/AdminLayout.vue`；清理 `frontend/src/router/index.js`、`frontend/src/components/layout/Sidebar.vue`、`frontend/src/stores/auth.js`、`frontend/src/App.vue` 中的 admin 路由/状态/菜单；清理 `app/core/permissions.py`、`app/dependencies.py`、`app/core/exceptions.py`、`app/api/research.py`、`app/models/user.py`、`app/core/utils.py` 中的 admin 权限/角色/文案；新增 Alembic 迁移 `e6f62d0a9f56` 收缩 `users.role` 枚举。
   - 测试层清理：删除 `tests/conftest.py` 的 `valid_admin_token` / `admin_headers` fixtures、`tests/unit/models/test_user.py` 的 admin 角色用例、`tests/unit/api/test_research.py` 的 admin 访问/取消/retry 用例、`tests/unit/core/test_exceptions.py` 的 `AdminPermissionRequiredException` 用例、`frontend/tests` 中 admin 路由守卫与 authStore `isAdmin` 用例。
 
+### Added
+- **Phase 6 §7.1 [运维] 可观测性（Prometheus + Grafana）**：
+  - 新增 `app/metrics/` 模块：
+    - `app/metrics/registry.py` — 独立 `CollectorRegistry`，定义 9 个核心 Prometheus 指标（任务状态、阶段耗时、LLM Token、成本、Agent Loop 迭代、Celery 队列/Worker/活跃任务）；预留 `PROMETHEUS_MULTIPROC_DIR` 多进程聚合。
+    - `app/metrics/emitters.py` — 失败安全的业务埋点函数（`emit_task_status_transition`、`emit_phase_duration`、`emit_llm_tokens`、`emit_task_cost`、`emit_agent_loop_iteration`、Celery Gauge setter）。
+    - `app/metrics/collector.py` — `MetricsCollector` 后台异步采集器，定时刷新队列长度、Worker 在线数、Worker 活跃任务数。
+    - `app/metrics/__init__.py` — 暴露 `setup_metrics()` / `shutdown_metrics()` / `get_metrics_output()`。
+  - `app/main.py` — lifespan 中启停 `MetricsCollector`；新增 `GET /metrics` 端点（无需 JWT）。
+  - `app/middleware/auth_middleware.py` — 将 `settings.METRICS_ENDPOINT` 加入公开路径，供 Prometheus 抓取。
+  - `app/core/llm.py` — `LLMResult` 扩展 `duration_ms` 与 `model` 字段，`chat_completion()` 返回前填充，用于更精准的 LLM 级监控。
+  - 业务埋点接入：
+    - `app/services/research_service.py` — 任务创建/取消/retry 时 emit 状态转换。
+    - `app/services/task_lifecycle.py` — 任务启动（pending→running）时 emit 状态转换。
+    - `app/agent/runtime.py` — Step 完成/失败时 emit 阶段耗时与 LLM token/cost；任务终态/致命错误时 emit 状态转换。
+    - `app/agent/loop.py` — 每轮 Agent Loop 迭代 emit 计数。
+    - `app/tasks/research_task.py` — `_emergency_fail()` 时 emit 失败状态。
+    - `app/main.py` — Worker 超时（E3112）/ Pending 超时（E3113）时 emit 失败状态。
+  - Grafana Dashboard Provisioning：
+    - `grafana/provisioning/datasources/datasources.yml` — Prometheus 数据源。
+    - `grafana/provisioning/dashboards/dashboards.yml` — Dashboard provider。
+    - `grafana/dashboards/researchmind_v1.json` — ResearchMind v1.0 Dashboard，含任务量趋势、失败率、阶段耗时 P50/P95/P99、Token 分布、成本趋势、Worker 健康、队列积压、错误码 TopN 等面板。
+  - 配置项：`app/config.py` 与 `.env.example` 新增 `METRICS_ENABLED`、`METRICS_ENDPOINT`、`METRICS_QUEUE_REFRESH_INTERVAL`、`METRICS_WORKER_REFRESH_INTERVAL`、`METRICS_WORKER_PING_TIMEOUT`。
+  - 依赖：`requirements.txt` 新增 `prometheus-client==0.21.*`。
+  - 测试覆盖：`tests/unit/core/test_metrics.py`（指标注册与埋点）、`tests/unit/api/test_metrics.py`（`/metrics` 端点）、`tests/unit/core/test_llm.py` 扩展（`LLMResult` 新字段）、`tests/conftest.py` 新增 Registry 清理 fixture。
+  - Celery / Redis 监控选型：**Prometheus Redis Exporter**（`oliver006/redis_exporter`），Grafana 可复用官方 Redis Exporter Dashboard（ID 763）；不引入 Flower，因为 Flower 是独立 UI 无法接入 Grafana。
+
 ### Fixed
 - **人工评估聚合分无法被 `eval_offline.py` 加载**：`app/evaluation/manual.py::validate_manual_record` 要求维度评分为 `int`，聚合后的平均分（如 4.7）被判定为越界并跳过；`app/evaluation/models.py::ManualEvaluationRecord.from_dict` 还将浮点分 `int()` 截断。修复：校验逻辑接受 `int | float`；`ManualDimensionScore.score` 类型改为 `float`；`from_dict` 改用 `float()` 保留小数。新增 `tests/unit/evaluation/test_manual.py::test_浮点评分校验通过且不被截断` 回归测试。
 - **Agent SSE 日志暴露内部敏感/冗长信息**：前端 Step 日志中出现 `plan_tool 结果：planning 阶段执行失败: 500: {'code': 'E3101', ...}` 等包含原始异常 JSON 与 LLM 输出细节的内容，以及 `调用 memory_tool({"limit":5,"operation":"read"})`、`memory_tool 结果：已返回最近 5 条 Working Memory 记录（最近 phase=rerank，最近 tool=rerank_tool）` 等暴露工具参数与内部状态的内容。修复：

@@ -52,6 +52,8 @@ class LLMResult:
     completion_tokens: int
     total_tokens: int
     tool_calls: list[ToolCall] | None = None
+    duration_ms: int = 0
+    model: str = ""
 
 
 def _get_llm_client() -> AsyncOpenAI:
@@ -367,6 +369,8 @@ async def chat_completion(
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 tool_calls=tool_calls,
+                duration_ms=int((t_api - t0) * 1000),
+                model=llm_model,
             )
 
         except (LLMUnknownException, LLMAuthFailedException):

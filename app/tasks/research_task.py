@@ -21,6 +21,7 @@ from sqlalchemy import select as sa_select, update as sa_update
 from app.core.database import async_session_factory
 from app.core.exceptions import AppException, extract_recoverable_from_exception
 from app.core.trace_recorder import TraceRecorder
+from app.metrics import emit_task_status_transition
 from app.models.research_task import ResearchTask
 from app.models.research_step import ResearchStep
 from app.agent.runtime import AgentRuntime
@@ -272,11 +273,13 @@ async def _emergency_fail(task_id: str, error_msg: str | None = None, recoverabl
         )
         await session.commit()
         updated = result.rowcount > 0
-        if not updated:
+        if updated:
+            emit_task_status_transition("failed", recoverable=recoverable, error_code="E3999")
+            if error_msg:
+                logger.warning(
+                    "紧急失败原始信息（服务端记录）: task_id=%s, error=%s",
+                    task_id, error_msg[:1000],
+                )
+        else:
             logger.warning("紧急失败写入 CAS 失败，任务已非 pending/running: task_id=%s", task_id)
-        elif error_msg:
-            logger.warning(
-                "紧急失败原始信息（服务端记录）: task_id=%s, error=%s",
-                task_id, error_msg[:1000],
-            )
         return updated

@@ -530,9 +530,9 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Prometheus 指标暴露 | `app/metrics/` 基于 `prometheus_client`：任务状态计数 / Pipeline 阶段耗时 / LLM Token 消耗 / 队列长度 / Worker 心跳 |
-| ⏳ | Grafana Dashboard | Provisioned Dashboards：任务量趋势 / 阶段耗时 P50/P95/P99 / Token 使用分布 / 失败率 / Worker 健康 |
-| ⏳ | Celery / Redis 监控 | Flower 或 Prometheus Redis Exporter 监控 Broker 与队列 |
+| ✅ | Prometheus 指标暴露 | `app/metrics/` 基于 `prometheus_client`：任务状态计数 / Pipeline 阶段耗时 / LLM Token 消耗 / 队列长度 / Worker 心跳 |
+| ✅ | Grafana Dashboard | Provisioned Dashboards：任务量趋势 / 阶段耗时 P50/P95/P99 / Token 使用分布 / 失败率 / Worker 健康 |
+| ✅ | Celery / Redis 监控 | 采用 Prometheus Redis Exporter 监控 Broker 与队列；自定义 Celery Worker/队列指标通过 `app/metrics/collector.py` 采集 |
 
 ### 7.2 [运维] 部署就绪
 

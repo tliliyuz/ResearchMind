@@ -12,7 +12,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -22,6 +22,13 @@ from app.config import settings
 from app.core.database import async_session_factory
 from app.core.exceptions import AppException
 from app.core.logging_config import setup_logging
+from app.metrics import (
+    CONTENT_TYPE_LATEST,
+    emit_task_status_transition,
+    get_metrics_output,
+    setup_metrics,
+    shutdown_metrics,
+)
 from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.rate_limit_middleware import RateLimitMiddleware
 from app.middleware.request_id_middleware import RequestIDMiddleware
@@ -87,6 +94,8 @@ async def _mark_task_worker_timeout(task_id: str) -> None:
 
     logger.warning("Worker 超时，任务已标记为 failed: task_id=%s", task_id)
 
+    emit_task_status_transition("failed", recoverable=True, error_code="E3112")
+
     try:
         # 读取 last_checkpoint 供前端断点续跑
         async with async_session_factory() as session:
@@ -146,6 +155,8 @@ async def _mark_task_pending_timeout(task_id: str) -> None:
         return
 
     logger.warning("Pending 任务超时，已标记为 failed: task_id=%s", task_id)
+
+    emit_task_status_transition("failed", recoverable=True, error_code="E3113")
 
     payload = {
         "task_id": task_id,
@@ -268,6 +279,7 @@ async def _run_worker_timeout_watcher() -> None:
 async def lifespan(app: FastAPI):
     """应用启动 / 关闭时的生命周期事件。"""
     logger.info(f"🚀 {settings.APP_NAME} v0.1.0 启动中... (env={settings.ENV}, debug={settings.DEBUG})")
+    await setup_metrics()
     await _recover_stale_tasks()
     watcher_task = asyncio.create_task(_run_worker_timeout_watcher())
     yield
@@ -276,6 +288,7 @@ async def lifespan(app: FastAPI):
         await watcher_task
     except asyncio.CancelledError:
         pass
+    await shutdown_metrics()
     logger.info(f"👋 {settings.APP_NAME} 已关闭")
 
 
@@ -421,6 +434,15 @@ async def worker_health_check():
             "workers": workers,
         },
     }
+
+
+# ── Metrics 端点 ──────────────────────────────────────────
+
+
+@app.get(settings.METRICS_ENDPOINT, include_in_schema=False)
+async def metrics_endpoint():
+    """Prometheus 指标抓取端点。"""
+    return Response(content=get_metrics_output(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ── 路由注册 ──────────────────────────────────────────────

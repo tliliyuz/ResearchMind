@@ -30,6 +30,20 @@ os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 
 # ═══════════════════════════════════════════════════════════════
+# Metrics Registry 清理（必须在导入 app.metrics 前设置）
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.fixture(autouse=True)
+def _reset_metrics_registry():
+    """每个测试前将 Prometheus Registry 数值归零，避免跨测试状态污染。"""
+    from app.metrics.registry import _reset_for_testing
+
+    _reset_for_testing()
+    yield
+
+
+# ═══════════════════════════════════════════════════════════════
 # MySQL 专有类型 → SQLite 兼容渲染（仅测试环境）
 # ═══════════════════════════════════════════════════════════════
 

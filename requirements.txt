@@ -37,6 +37,9 @@ python-multipart==0.0.18
 python-dotenv==1.0.*
 bcrypt==4.2.*
 
+# Observability
+prometheus-client==0.21.*
+
 # Testing
 pytest==8.3.*
 pytest-asyncio==0.24.*

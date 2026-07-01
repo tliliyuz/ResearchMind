@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     # ── SSE ──
     SSE_HEARTBEAT_INTERVAL: int = 15
 
+    # ── 可观测性 / Prometheus ──
+    METRICS_ENABLED: bool = True
+    METRICS_ENDPOINT: str = "/metrics"
+    METRICS_QUEUE_REFRESH_INTERVAL: int = 15
+    METRICS_WORKER_REFRESH_INTERVAL: int = 15
+    METRICS_WORKER_PING_TIMEOUT: float = 5.0
+
     # ── 限流（Phase 4 激活，代码提前就位）──
     RATE_LIMIT_ENABLED: bool = False  # Phase 4 压测后启用
     RATE_LIMIT_WINDOW_SECONDS: int = 60

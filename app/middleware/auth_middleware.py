@@ -10,6 +10,7 @@
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from app.config import settings
 from app.core.security import decode_access_token
 
 # 不需要认证的公开路由
@@ -24,6 +25,8 @@ _PUBLIC_PATHS = {
 
 def _is_public(path: str) -> bool:
     """判断路径是否为公开路由（无需认证）。"""
+    if path == settings.METRICS_ENDPOINT:
+        return True
     return path in _PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/openapi.json")
 
 

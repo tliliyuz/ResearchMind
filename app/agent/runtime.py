@@ -22,6 +22,12 @@ from app.core.exceptions import (
 )
 from app.core.task_state_resolver import TaskStateResolver
 from app.core.trace_recorder import TraceRecorder
+from app.metrics import (
+    emit_llm_tokens,
+    emit_phase_duration,
+    emit_task_cost,
+    emit_task_status_transition,
+)
 from app.models.enums import STEP_TYPE_ENUM
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
@@ -276,6 +282,21 @@ class AgentRuntime:
         await self._persist_memory_entries()
         await self._session.commit()
 
+        # 指标：阶段耗时 + LLM token / cost
+        emit_phase_duration(step.step_type, duration_ms or 0, "success")
+        if step.cost:
+            emit_llm_tokens(
+                step.cost.get("model", ""),
+                step.cost.get("input_tokens", 0),
+                step.cost.get("output_tokens", 0),
+                step.step_type,
+            )
+            emit_task_cost(
+                step.cost.get("model", ""),
+                step.cost.get("estimated_cost_usd", 0.0),
+                step.step_type,
+            )
+
         await self._sse.publish(EVENT_STEP_COMPLETED, {
             "step_id": str(step.id),
             "output": step.output,
@@ -314,6 +335,8 @@ class AgentRuntime:
         step.duration_ms = duration_ms
         step.error_message = result.error_message or "Tool 执行失败"
         await self._session.flush()
+
+        emit_phase_duration(step.step_type, duration_ms or 0, "failed")
 
         await self._persist_memory_entries()
 
@@ -435,6 +458,12 @@ class AgentRuntime:
         )
         await self._session.commit()
 
+        emit_task_status_transition(
+            new_status,
+            recoverable=values.get("recoverable"),
+            error_code=values.get("error_code"),
+        )
+
         if result.rowcount == 0:
             await self._session.refresh(self._task, ["status"])
             logger.warning(
@@ -510,6 +539,11 @@ class AgentRuntime:
             updated = False
 
         if updated:
+            emit_task_status_transition(
+                "failed",
+                recoverable=recoverable,
+                error_code=error_code,
+            )
             try:
                 await self._sse.publish(EVENT_TASK_FAILED, {
                     "task_id": task_id,

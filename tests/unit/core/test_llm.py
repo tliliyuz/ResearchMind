@@ -237,6 +237,17 @@ class TestChatCompletion:
         assert result.prompt_tokens == 50
         assert result.completion_tokens == 20
         assert result.total_tokens == 70
+        assert result.duration_ms >= 0
+        assert result.model == "mimo-v2.5"
+
+    async def test_显式指定model_返回结果携带该模型名(self):
+        messages = [{"role": "user", "content": "Test"}]
+        self.mock_client.chat.completions.create.return_value = self._make_response()
+
+        result = await chat_completion(messages, model="deepseek-v4-pro")
+
+        assert result.model == "deepseek-v4-pro"
+        assert result.duration_ms >= 0
 
     async def test_timeout错误_重试3次后抛异常(self):
         messages = [{"role": "user", "content": "Test"}]

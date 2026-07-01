@@ -15,6 +15,7 @@ from sqlalchemy import select as sa_select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.metrics import emit_task_status_transition
 from app.models.enums import STEP_TYPE_ENUM
 from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
@@ -185,6 +186,8 @@ async def start_research_task(
             "status": "running",
             "created_at": task.created_at.isoformat() if task.created_at else None,
         })
+
+    emit_task_status_transition("running")
 
     logger.info(
         "任务启动: task_id=%s, mode=%s",

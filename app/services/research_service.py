@@ -24,6 +24,7 @@ from app.core.exceptions import (
     InvalidDepthException,
     InvalidRequirementsException,
 )
+from app.metrics import emit_task_status_transition
 from app.models.evidence_item import EvidenceItem
 from app.models.report_section import ReportSection
 from app.models.research_task import ResearchTask
@@ -109,6 +110,8 @@ async def create_task(
         "研究任务已创建: task_id=%s, user_id=%d, topic=%s, task_type=%s",
         task.id, user_id, request.topic[:50], request.requirements.task_type,
     )
+
+    emit_task_status_transition("pending")
 
     return ResearchCreateResponse(
         task_id=task.id,
@@ -439,6 +442,8 @@ async def cancel_task(
     task.status = "canceled"
     task.completed_at = now
 
+    emit_task_status_transition("canceled")
+
     logger.info("研究任务已取消: task_id=%s", task.id)
     return ResearchCancelResponse(task_id=task.id, status="canceled")
 
@@ -602,6 +607,8 @@ async def retry_task(
 
     # 同步内存对象
     task.status = "pending"
+
+    emit_task_status_transition("pending")
 
     # 4. 从 execution_context 构建 resume_from
     ec = task.execution_context or {}
