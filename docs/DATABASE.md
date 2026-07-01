@@ -75,7 +75,7 @@ CREATE TABLE users (
     id              BIGINT PRIMARY KEY AUTO_INCREMENT,
     username        VARCHAR(64)  NOT NULL UNIQUE,
     password_hash   VARCHAR(256) NOT NULL,                  -- bcrypt 哈希
-    role            ENUM('user','admin') DEFAULT 'user',
+    role            ENUM('user') DEFAULT 'user',
     status          ENUM('active','disabled') DEFAULT 'active',  -- disabled 后拒绝登录与 Token 刷新
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP  -- 自动更新由 ORM onupdate 维护
@@ -87,7 +87,7 @@ CREATE TABLE users (
 | id | BIGINT | 主键 |
 | username | VARCHAR(64) | 用户名，唯一 |
 | password_hash | VARCHAR(256) | bcrypt 哈希后的密码 |
-| role | ENUM | 角色：user（普通用户）/ admin（管理员） |
+| role | ENUM | 角色：user（普通用户）。v1.0 不区分管理员角色 |
 | status | ENUM | 状态：active（正常）/ disabled（禁用），禁用后拒绝登录和 Token 刷新 |
 | created_at | DATETIME | 创建时间（UTC） |
 | updated_at | DATETIME | 更新时间（UTC），自动更新 |

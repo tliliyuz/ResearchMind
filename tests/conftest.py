@@ -227,13 +227,6 @@ def valid_access_token() -> str:
 
 
 @pytest.fixture
-def valid_admin_token() -> str:
-    """生成 admin 角色的有效 access_token。"""
-    from app.core.security import create_access_token
-    return create_access_token(user_id=2, username="admin", role="admin")
-
-
-@pytest.fixture
 def valid_refresh_token_str() -> str:
     """生成有效 refresh_token 字符串（测试专用密钥，7 天有效期）。"""
     from app.core.security import create_refresh_token
@@ -244,12 +237,6 @@ def valid_refresh_token_str() -> str:
 def auth_headers(valid_access_token: str) -> dict:
     """携带有效 access_token 的请求头。"""
     return {"Authorization": f"Bearer {valid_access_token}"}
-
-
-@pytest.fixture
-def admin_headers(valid_admin_token: str) -> dict:
-    """携带 admin access_token 的请求头。"""
-    return {"Authorization": f"Bearer {valid_admin_token}"}
 
 
 # ═══════════════════════════════════════════════════════════════

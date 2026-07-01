@@ -65,22 +65,6 @@ class TestUserModel:
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
-    async def test_role可显式设置为admin(self, db_session: AsyncSession):
-        from app.core.security import hash_password
-        user = User(
-            username="adminuser",
-            password_hash=hash_password("testpass"),
-            role="admin",
-        )
-        db_session.add(user)
-        await db_session.flush()
-
-        result = await db_session.execute(
-            select(User).where(User.username == "adminuser")
-        )
-        saved = result.scalar_one()
-        assert saved.role == "admin"
-
     async def test_status可显式设置为disabled(self, db_session: AsyncSession):
         from app.core.security import hash_password
         user = User(

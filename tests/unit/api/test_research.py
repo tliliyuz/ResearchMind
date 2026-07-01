@@ -33,13 +33,13 @@ from app.models.user import User
 
 @pytest.fixture(autouse=True)
 async def seed_test_users(db_session: AsyncSession):
-    """预置测试用户：user_id=1 (testuser), user_id=2 (admin), user_id=999 (other)。
+    """预置测试用户：user_id=1 (testuser), user_id=2 (other2), user_id=999 (other)。
 
     满足 research_tasks 的 FK 约束。
     """
     users = [
         User(id=1, username="testuser", password_hash=hash_password("pass"), role="user", status="active"),
-        User(id=2, username="admin", password_hash=hash_password("pass"), role="admin", status="active"),
+        User(id=2, username="other2", password_hash=hash_password("pass"), role="user", status="active"),
         User(id=999, username="other", password_hash=hash_password("pass"), role="user", status="active"),
     ]
     for u in users:
@@ -352,27 +352,6 @@ class TestGetResearchDetailAPI:
         assert response.status_code == 403
         assert response.json()["code"] == "E2002"
 
-    async def test_admin可访问他人任务(
-        self, async_client: AsyncClient, admin_headers: dict, db_session: AsyncSession
-    ):
-        """admin 可以审计查看任意用户的任务。"""
-        task = ResearchTask(
-            id="550e8400-e29b-41d4-a716-446655440001",
-            user_id=999,
-            topic="审计目标",
-            requirements={"task_type": "analysis"},
-            status="pending",
-        )
-        db_session.add(task)
-        await db_session.flush()
-
-        response = await async_client.get(
-            "/api/research/550e8400-e29b-41d4-a716-446655440001",
-            headers=admin_headers,
-        )
-        assert response.status_code == 200
-        assert response.json()["data"]["topic"] == "审计目标"
-
     async def test_失败任务详情_脏error_message被清洗(
         self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession
     ):
@@ -540,13 +519,6 @@ class TestCancelResearchAPI:
         response = await async_client.post(f"/api/research/{task.id}/cancel", headers=auth_headers)
         assert response.status_code == 403
         assert response.json()["code"] == "E2002"
-
-    async def test_admin可取消他人任务(self, async_client: AsyncClient, admin_headers: dict, db_session: AsyncSession):
-        task = await self._seed_task(db_session, status="running", user_id=999, task_id="task-cancel-admin")
-
-        response = await async_client.post(f"/api/research/{task.id}/cancel", headers=admin_headers)
-        assert response.status_code == 200
-        assert response.json()["data"]["status"] == "canceled"
 
     async def test_CAS并发状态变更返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
         """模拟任务在 cancel 前已被 Worker 改为 completed，CAS 失败返回 E2003。"""
@@ -867,13 +839,6 @@ class TestRetryResearchAPI:
         response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
         assert response.status_code == 403
         assert response.json()["code"] == "E2002"
-
-    async def test_admin可retry他人任务(self, async_client: AsyncClient, admin_headers: dict, db_session: AsyncSession):
-        task = await self._seed_retry_task(db_session, status="failed", user_id=999, task_id="task-retry-admin")
-
-        response = await async_client.post(f"/api/research/{task.id}/retry", headers=admin_headers)
-        assert response.status_code == 202
-        assert response.json()["data"]["status"] == "running"
 
     async def test_running任务_返回409_E2003(self, async_client: AsyncClient, auth_headers: dict, db_session: AsyncSession):
         task = await self._seed_retry_task(db_session, status="running", task_id="task-retry-running")

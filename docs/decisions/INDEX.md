@@ -9,7 +9,7 @@
 | 3 | 任务详情：`progress` 从 `execution_context.progress` 提取，前端不直接访问 `execution_context` | [API.md §3.1](../../resource/docs/API.md#31-研究任务) |
 | 4 | 任务删除：FK CASCADE 级联清理全部派生数据 | [DATABASE.md §4](../DATABASE.md#4-外键与级联策略) |
 | 5 | TaskStateResolver：禁止 Task 自身直接写入状态，统一由 Resolver 推导 | [ARCHITECTURE.md §3.7](../ARCHITECTURE.md#37-taskstateresolver) |
-| 6 | 权限两层分离：`require_task_accessible`（资源归属）+ `require_admin`（系统角色） | [ARCHITECTURE.md §4](../ARCHITECTURE.md#4-权限模型) |
+| 6 | 权限一层：`require_task_accessible` 仅 owner 可访问自己的任务；v1.0 不维护系统管理角色 | [ARCHITECTURE.md §4](../ARCHITECTURE.md#4-权限模型) |
 | 7 | Pipeline Orchestrator 负责阶段调度 + Execution Context 原子更新 | [ARCHITECTURE.md §3.3](../ARCHITECTURE.md#33-execution-context断点续跑的核心) |
 | 8 | SSE Bridge：Redis Pub/Sub 桥接 Celery Worker ↔ FastAPI ↔ SSE Stream | [RESEARCH_PIPELINE.md §9](../RESEARCH_PIPELINE.md#9-pipeline-sse-事件映射) |
 | 9 | Planning：deepseek-v4-pro + `deep_thinking=True` + `temperature=0.3` | [RESEARCH_PIPELINE.md §2.5](../RESEARCH_PIPELINE.md#25-参数) |
@@ -55,6 +55,3 @@
 | 49 | `agent.thought` SSE 事件 | [API.md §4.1](../../resource/docs/API.md#41-事件类型总览) |
 | 50 | `agent.action` SSE 事件 | [API.md §4.1](../../resource/docs/API.md#41-事件类型总览) |
 | 51 | `agent.observation` SSE 事件 | [API.md §4.1](../../resource/docs/API.md#41-事件类型总览) |
-| 52 | Admin 权限：仅 `require_admin` 可访问管理后台接口 | [ARCHITECTURE.md §4](../ARCHITECTURE.md#4-权限模型) |
-| 53 | Trace 数据写入 `research_tasks.trace` JSON 列 | [ARCHITECTURE.md §5.9](../ARCHITECTURE.md#59-可观测性) |
-| 54 | 统计图表按天聚合 + P50/P95/P99 分位数 | [API.md §3.5](../../resource/docs/API.md#35-统计) |

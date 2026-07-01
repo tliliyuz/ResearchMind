@@ -29,7 +29,7 @@ class User(Base):
         sa.String(256), nullable=False, comment="bcrypt 哈希"
     )
     role: Mapped[str] = mapped_column(
-        sa.Enum("user", "admin", name="user_role"),
+        sa.Enum("user", name="user_role"),
         default="user",
         server_default=sa.text("'user'"),
     )

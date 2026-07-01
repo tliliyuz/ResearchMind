@@ -6,6 +6,6 @@ def escape_like(value: str) -> str:
 
     MySQL / SQLite 默认使用 ``\`` 作为 ESCAPE 字符。
 
-    供 admin_service / trace_service / document_service 等模糊搜索复用。
+    供任务列表搜索等模糊搜索复用。
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

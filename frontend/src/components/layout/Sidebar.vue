@@ -139,7 +139,7 @@
         </div>
         <div class="user-info" v-show="!collapsed" @click.stop="toggleUserMenu">
           <div class="user-name">{{ authStore.user?.username || '用户' }}</div>
-          <div class="user-role">{{ authStore.isAdmin ? '管理员' : '用户' }}</div>
+          <div class="user-role">用户</div>
         </div>
 
         <!-- 用户菜单卡片 -->
@@ -151,21 +151,13 @@
             </div>
             <div class="user-menu-header-info">
               <div class="user-name">{{ authStore.user?.username || '用户' }}</div>
-              <div class="user-role">{{ authStore.isAdmin ? '管理员' : '用户' }}</div>
+              <div class="user-role">用户</div>
             </div>
           </div>
           <!-- 菜单选项 -->
           <button class="user-menu-item" @click="handleMenuChangePassword">
             <i class="fas fa-lock"></i>
             <span>修改密码</span>
-          </button>
-          <button
-            v-if="authStore.isAdmin"
-            class="user-menu-item"
-            @click="handleMenuAdmin"
-          >
-            <i class="fas fa-shield-alt"></i>
-            <span>管理后台</span>
           </button>
           <button class="user-menu-item danger" @click="handleMenuLogout">
             <i class="fas fa-sign-out-alt"></i>
@@ -359,12 +351,6 @@ function closeUserMenu() {
 function handleMenuChangePassword() {
   closeUserMenu()
   openChangePasswordDialog()
-}
-
-/** 点击菜单「管理后台」→ 关闭卡片 → 跳转管理后台 */
-function handleMenuAdmin() {
-  closeUserMenu()
-  router.push('/admin')
 }
 
 /** 点击菜单「退出登录」→ 关闭卡片 → 执行退出 */

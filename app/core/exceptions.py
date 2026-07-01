@@ -230,7 +230,7 @@ class UserDisabledException(AppException):
     def __init__(self):
         super().__init__(
             "E1010", "用户已被禁用", 401,
-            {"error_type": "UserDisabled", "error_description": "该用户账号已被管理员禁用，请联系管理员"},
+            {"error_type": "UserDisabled", "error_description": "该用户账号已被禁用"},
         )
 
 
@@ -256,7 +256,7 @@ class TaskAccessDeniedException(AppException):
     def __init__(self):
         super().__init__(
             "E2002", "无权访问该任务", 403,
-            {"error_type": "TaskAccessDenied", "error_description": "此任务不属于当前用户且当前用户非管理员"},
+            {"error_type": "TaskAccessDenied", "error_description": "此任务不属于当前用户"},
         )
 
 
@@ -315,14 +315,6 @@ class InvalidRequirementsException(AppException):
         super().__init__(
             "E2008", "requirements 字段缺失或非法", 400,
             {"error_type": "InvalidRequirements", "error_description": detail or "requirements 字段缺失或格式不正确"},
-        )
-
-
-class AdminPermissionRequiredException(AppException):
-    def __init__(self):
-        super().__init__(
-            "E2009", "该操作需要管理员权限", 403,
-            {"error_type": "AdminRequired", "error_description": "该操作仅限管理员执行"},
         )
 
 

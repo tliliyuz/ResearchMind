@@ -19,11 +19,10 @@
 | 构建工具 | Vite | 开发服务器（端口 5173） |
 | UI 组件库 | Element Plus | 表单、表格、弹窗、消息提示等 |
 | 状态管理 | Pinia | 认证、研究任务、报告三个 store |
-| 路由 | Vue Router | 三级路由守卫（公开/需登录/需管理员） |
+| 路由 | Vue Router | 两级路由守卫（公开/需登录） |
 | HTTP 客户端 | Axios | 请求/响应拦截器，自动处理 Token 和 401 |
 | 图标 | Font Awesome 6 Free | 全站统一图标方案 |
 | Markdown 渲染 | markdown-it + highlight.js | 研究报告正文渲染 + 代码高亮 |
-| 图表 | ECharts 6 | 管理后台统计可视化 |
 
 > **技术栈说明**：ResearchMind 前端技术栈为 Vue 3 + Vite + Pinia + Element Plus + Axios + Font Awesome。工程脚手架、Auth 体系、Design Token 系统各模块锚点见 [§1.4 共享工具模块](#14-共享工具模块)。
 
@@ -36,10 +35,10 @@
 ├─────────────┤  ├─────────────┤  ├─────────────┤
 │ • user      │  │ • taskList  │  │ • report    │
 │ • token     │  │ • current   │  │ • loading   │
-│ • isAdmin   │  │ • sseStatus │  │ • sections  │
-│ • login()   │  │ • progress  │  │ • evidence  │
-│ • logout()  │  │ • create()  │  │ • trace     │
-│ • refresh() │  │ • fetch()   │  │ • fetch()   │
+│ • login()   │  │ • sseStatus │  │ • sections  │
+│ • logout()  │  │ • progress  │  │ • evidence  │
+│ • refresh() │  │ • create()  │  │ • trace     │
+│             │  │ • fetch()   │  │ • fetch()   │
 │             │  │ • cancel()  │  │             │
 │             │  │ • retry()   │  │             │
 │             │  │ • poll()    │  │             │
@@ -108,7 +107,7 @@
 
 ### 2.1 路由表
 
-> **权限模型**：后端 API 区分两种视角——user 管理自己的研究任务，admin 跨用户管理全部任务。前端路由对齐此模型。
+> **权限模型**：后端 API 仅区分公开接口与登录用户自己的研究任务。前端路由对齐此模型。
 
 **用户视角路由**（所有登录用户可访问）：
 
@@ -118,19 +117,6 @@
 | `/login` | LoginPage | 公开 | 已登录者访问自动重定向到 `/research` |
 | `/research` | ResearchPage | 需登录 | 核心研究页：任务创建 + 进度追踪 + 报告查看，默认首页 |
 | `/history` | HistoryPage | 需登录 | 研究任务历史列表（分页、按状态筛选） |
-
-**管理员视角路由**（仅 admin 可访问，使用独立 AdminLayout 布局）：
-
-| 路径 | 页面 | 权限 | 说明 |
-|:---|:---|:---|:---|
-| `/admin` | 重定向到 `/admin/stats` | 需管理员 | 管理后台默认页 |
-| `/admin/stats` | AdminStats | 需管理员 | 系统统计（数据总览 + ECharts 图表） |
-| `/admin/tasks` | AdminTaskList | 需管理员 | 全部研究任务（跨用户），可查看/删除/取消 |
-| `/admin/tasks/:task_id` | AdminTaskDetail | 需管理员 | 任务详情（Pipeline 阶段 + Steps + Trace） |
-| `/admin/users` | AdminUserList | 需管理员 | 用户管理列表（筛选+操作菜单） |
-| `/admin/users/:user_id` | AdminUserDetail | 需管理员 | 用户详情（统计+快捷操作） |
-
-> **布局说明**：Admin 路由使用独立的 `AdminLayout.vue` 布局，拥有专用的 Admin 侧边栏，与用户主侧边栏完全分离。Admin 通过用户菜单 →「管理后台」入口进入。
 
 **兜底**：
 
@@ -145,8 +131,6 @@
     ↓
 未登录且访问需认证页 → 重定向 /login
     ↓
-非 admin 访问 admin/* → 重定向 /research
-    ↓
 正常放行
 ```
 
@@ -158,7 +142,6 @@
 | 资源管理 | HistoryPage（任务历史列表） |
 | 嵌套路由 | 无（ResearchPage 通过内部 Tab/状态切换） |
 | 公共资源 | 无（v1.0 MVP 无此概念） |
-| 管理后台 | 任务管理 / 用户管理 / 统计 |
 
 ---
 
@@ -233,10 +216,10 @@ ResearchPage 是 ResearchMind 的核心页面，承载三个主要状态：**任
 │  [所有用户] 历史任务             │                             │
 │  • 点击进入 /history           │  ┌─ 运行态 ──────────────┐  │
 │  ─────────────────────────────┤  │ Pipeline 阶段进度条    │  │
-│  [admin] 管理后台              │  │ Step 实时日志流        │  │
-│  • 系统统计 / 任务管理 / …     │  │ 取消按钮               │  │
-│  ─────────────────────────────┤  └──────────────────────┘  │
-│  用户头像 + 退出按钮             │                             │
+│  用户头像 + 退出按钮             │  │ Step 实时日志流        │  │
+│                                  │  │ 取消按钮               │  │
+│                                  │  └──────────────────────┘  │
+│                                  │                             │
 │                                  │  ┌─ 完成态 ──────────────┐  │
 │                                  │  │ 报告标题 + 摘要       │  │
 │                                  │  │ 章节导航（侧栏）      │  │
@@ -634,25 +617,15 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 | 点击「历史任务」| 跳转 `/history`，查看全部历史任务分页列表 |
 | 高亮状态 | 当路由在 `/history` 时，「历史任务」高亮；当路由在 `/research` 时无高亮 |
 
-#### 4.6.3 管理后台入口（仅 admin 可见）
-
-> **设计原则**：管理后台使用独立的 `AdminLayout` 布局，不与用户侧边栏混用。入口位于用户菜单卡片中（头像 → 用户菜单 → 「管理后台」）。
+#### 4.6.3 用户栏行为
 
 | 操作 | 行为 |
 |:---|:---|
-| 菜单中出现「管理后台」选项（仅 `isAdmin` 可见）| 位于「修改密码」和「退出登录」之间，图标 `fa-shield-alt` |
-| 点击「管理后台」| 关闭卡片 → 跳转 `/admin`（默认 `/admin/stats`），进入独立 Admin 布局 |
-| Admin 侧边栏点击「← 返回研究」| 返回 `/research`，恢复用户侧边栏 |
-
-#### 4.6.4 用户栏行为
-
-| 操作 | 行为 |
-|:---|:---|
-| 点击头像/用户名 | 弹出用户菜单卡片（修改密码 / 管理后台[admin] / 退出登录）。收起态仅有头像，`title` 提示「用户菜单」 |
+| 点击头像/用户名 | 弹出用户菜单卡片（修改密码 / 退出登录）。收起态仅有头像，`title` 提示「用户菜单」 |
 | 用户菜单 → 修改密码 | 关闭卡片 → 弹出修改密码对话框 |
 | 用户菜单 → 退出登录 | 关闭卡片 → 调 `POST /api/auth/logout` 吊销 refresh_token → `ElMessage.success('已退出登录')` → 清除 access_token + refresh_token → 停止 scheduleRefresh 定时器 → 跳转 `/login` |
 
-#### 4.6.5 侧边栏展开/收起
+#### 4.6.4 侧边栏展开/收起
 
 - **切换按钮**：侧边栏顶部右侧，`fa-chevron-left`（展开态）/ `fa-chevron-right`（收起态）
 - **展开态**（256px）：Logo 图标 + 副标题 + 新建研究按钮（含文字）+ 导航项（图标 + 文字）+ 用户信息（头像 + 用户名 + 角色，点击弹出用户菜单）
@@ -660,9 +633,9 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 - **过渡动画**：`width var(--rm-transition-normal)`（0.2s ease）
 - **状态管理**：`Sidebar.vue` 本地 `ref`，不持久化（刷新恢复展开）
 
-#### 4.6.6 用户菜单卡片
+#### 4.6.5 用户菜单卡片
 
-点击头像/用户名弹出用户菜单：修改密码 + 退出登录 + 管理后台（admin）三个菜单项。布局、定位、动画、关闭行为见 §4.6.6。
+点击头像/用户名弹出用户菜单：修改密码 + 退出登录 两个菜单项。布局、定位、动画、关闭行为在本节描述。
 
 ---
 
@@ -733,50 +706,6 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 无历史任务时显示：
 - 图标 + 「暂无研究任务」
 - 「开始第一次研究」引导按钮 → 跳转 `/research`
-
----
-
-## 6. 管理后台交互（admin 专属）
-
-> **实现状态**：Phase 6 实现。Admin 使用独立 `AdminLayout.vue` 布局，通过用户菜单 →「管理后台」进入。
-
-### 6.1 AdminLayout 布局
-
-```
-┌──────────────────────────────────────────────┐
-│ Admin 侧边栏 (240px)    │ 主内容区            │
-│ ┌──────────────────────┐ │ ┌────────────────┐ │
-│ │ 🛡 管理后台          │ │ │ Header: 页标题 │ │
-│ │ ResearchMind Admin   │ │ ├────────────────┤ │
-│ ├──────────────────────┤ │ │                │ │
-│ │ 📊 系统统计          │ │ │                │ │
-│ │ 📋 任务管理          │ │ │ <slot />       │ │
-│ │ 👥 用户管理          │ │ │                │ │
-│ ├──────────────────────┤ │ │                │ │
-│ │ ← 返回研究           │ │ │                │ │
-│ └──────────────────────┘ │ └────────────────┘ │
-└──────────────────────────────────────────────┘
-```
-
-### 6.2 系统统计页（`/admin/stats`）
-
-> **后端接口**：`GET /api/admin/stats`（Phase 6）
-
-统计卡片：用户总数、任务总数、完成任务数、失败任务数、来源总数。ECharts 图表：任务量趋势（折线图）、任务耗时分布（柱状图）、研究类型分布（饼图）。
-
-> **实现模块**：`composables/useECharts.js` — ECharts 响应式组合式函数：自动 init/dispose + ResizeObserver 监听容器尺寸 + `setOption()` 暂存机制（解决 onMounted 前调用问题）。ResearchMind 自有实现，零改动。
-
-### 6.3 任务管理页（`/admin/tasks`）
-
-> **后端接口**：`GET /api/admin/tasks`（Phase 6）
-
-跨用户查看全部研究任务，含 `username` 列。可按 `user_id`、`status`、`task_type` 筛选。可查看详情 / 取消运行中任务 / 删除（违规清理）。
-
-### 6.4 用户管理页（`/admin/users`）
-
-> **后端接口**：`GET /api/admin/users`（Phase 6）
-
-管理后台用户管理功能：用户列表（筛选+分页+操作菜单）、禁用/启用、重置密码、用户详情页（统计卡片+快捷操作）。
 
 ---
 
@@ -867,9 +796,11 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 - `ElMessage` 成功/失败提示格式必须一致
 - 列表刷新策略（§7.6）的取舍原则必须一致
 
-### 7.8 Admin 页面交互约定
+### 7.8 列表页面交互约定
 
-**7.8.1 表格操作列**：单条操作使用 `el-dropdown` 或操作按钮组，每项带 icon。危险操作（删除、禁用）使用红色文字或 danger 类型按钮。
+适用于 HistoryPage 等含表格/列表的页面。
+
+**7.8.1 表格操作列**：单条操作使用 `el-dropdown` 或操作按钮组，每项带 icon。危险操作（删除）使用红色文字或 danger 类型按钮。
 
 **7.8.2 筛选联动**：筛选条件变化时自动触发 `loadList()` 并重置 `currentPage = 1`。筛选期间表格显示 `v-loading`。
 
@@ -997,16 +928,15 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 |:---|:---|
 | 技术栈 | Vue 3 + Vite + Pinia + Element Plus |
 | Auth 体系 | 登录/注册/Token 刷新/路由守卫 |
-| 布局框架 | AppLayout + AdminLayout + Sidebar |
+| 布局框架 | AppLayout + Sidebar |
 | 设计系统 | `--rm-*` CSS 变量 |
 | 核心页面 | ResearchPage（任务提交+进度+报告） |
 | SSE 协议 | 18 种事件 v1.0 + 2 种预留 [v2]（Pipeline 进度流 + Agent ReAct 事件） |
 | 状态管理 | auth / task / report |
-| 管理后台 | 任务/用户管理 + 统计 |
 | Markdown 渲染 | 研究报告渲染 |
 | 图标方案 | Font Awesome 6 Free |
 
-> **实现说明**：Auth 体系 / 布局框架 / Design Token / Markdown 渲染器 / SSE 解析框架 / ECharts composable 为 ResearchMind 自有实现，各模块锚点见 [§1.4 共享工具模块](#14-共享工具模块)。
+> **实现说明**：Auth 体系 / 布局框架 / Design Token / Markdown 渲染器 / SSE 解析框架 为 ResearchMind 自有实现，各模块锚点见 [§1.4 共享工具模块](#14-共享工具模块)。
 
 ---
 
@@ -1022,10 +952,6 @@ api/research.retryTask(taskId) → POST /api/research/{task_id}/retry
 | ResearchPage（运行态） | ✅ 已完成 | Phase 2 |
 | ResearchPage（完成态） | ✅ 已完成 | Phase 3 |
 | HistoryPage | ✅ 已完成 | Phase 2 |
-| AdminLayout | ✅ 已完成 | Phase 5 |
-| StatsPage | ✅ 已完成 | Phase 5 |
-| AdminTaskList | ✅ 已完成 | Phase 5 |
-| AdminUserList | ✅ 已完成 | Phase 5 |
 | SSE 解析器 | ✅ 已完成 | Phase 2 |
 | Markdown 渲染器 | ✅ 已完成 | Phase 1 |
 | 响应式适配 | ✅ 已完成 | Phase 3 |

@@ -13,7 +13,6 @@ export const useAuthStore = defineStore('auth', () => {
   let _refreshing = false
 
   const isLoggedIn = computed(() => !!token.value)
-  const isAdmin = computed(() => user.value?.role === 'admin')
 
   /** 统一存储 token 对到 state + localStorage */
   function setTokens(accessToken, refreshTokenStr) {
@@ -161,7 +160,6 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     refreshToken: refreshTokenValue,
     isLoggedIn,
-    isAdmin,
 
     // 方法
     setTokens,

@@ -20,43 +20,6 @@ const routes = [
     component: () => import('@/views/HistoryPage.vue'),
     meta: { requiresAuth: true }
   },
-  // Admin 独立布局（嵌套路由）
-  {
-    path: '/admin',
-    component: () => import('@/components/layout/AdminLayout.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true },
-    children: [
-      {
-        path: '',
-        redirect: '/admin/stats',
-      },
-      {
-        path: 'stats',
-        name: 'AdminStats',
-        component: () => import('@/views/admin/StatsPage.vue'),
-      },
-      {
-        path: 'tasks',
-        name: 'AdminTasks',
-        component: () => import('@/views/admin/AdminTaskList.vue'),
-      },
-      {
-        path: 'tasks/:task_id',
-        name: 'AdminTaskDetail',
-        component: () => import('@/views/admin/AdminTaskDetail.vue'),
-      },
-      {
-        path: 'users',
-        name: 'AdminUsers',
-        component: () => import('@/views/admin/AdminUserList.vue'),
-      },
-      {
-        path: 'users/:user_id',
-        name: 'AdminUserDetail',
-        component: () => import('@/views/admin/AdminUserDetail.vue'),
-      },
-    ],
-  },
   {
     path: '/',
     redirect: '/research'
@@ -86,14 +49,6 @@ export function authGuard(to, from, next) {
   // 需要认证的页面 → 未登录则跳转登录页
   if (to.meta.requiresAuth && !authStore.isLoggedIn) {
     next('/login')
-    return
-  }
-
-  // 需要管理员权限 → 非 admin 用户重定向
-  // 使用 to.matched 遍历所有匹配路由记录，因为 Vue Router 4 子路由不继承父路由 meta
-  const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
-  if (requiresAdmin && !authStore.isAdmin) {
-    next('/research')
     return
   }
 

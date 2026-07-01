@@ -1,5 +1,5 @@
 // AuthStore 单元测试 — 覆盖 src/stores/auth.js
-// 对齐 TESTING_STRATEGY.md §5.2：login/logout/refresh 并发防抖、scheduleRefresh、isAdmin
+// 对齐 TESTING_STRATEGY.md §5.2：login/logout/refresh 并发防抖、scheduleRefresh
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -62,30 +62,6 @@ describe('AuthStore', () => {
       await expect(store.login('tester', 'wrong')).rejects.toBeDefined()
       expect(store.token).toBe('')
       expect(localStorage.getItem('access_token')).toBeNull()
-    })
-  })
-
-  describe('isAdmin 计算属性', () => {
-    it('role为admin_isAdmin为true', async () => {
-      const at = userJwt('admin', 1)
-      authApi.login.mockResolvedValue({ data: { data: { access_token: at, refresh_token: 'rt' } } })
-      const store = useAuthStore()
-      await store.login('admin', 'pass')
-      expect(store.isAdmin).toBe(true)
-    })
-
-    it('role为user_isAdmin为false', async () => {
-      const at = userJwt('user', 2)
-      authApi.login.mockResolvedValue({ data: { data: { access_token: at, refresh_token: 'rt' } } })
-      const store = useAuthStore()
-      await store.login('user2', 'pass')
-      expect(store.isAdmin).toBe(false)
-    })
-
-    it('未登录_isAdmin为false', () => {
-      const store = useAuthStore()
-      expect(store.isAdmin).toBe(false)
-      expect(store.isLoggedIn).toBe(false)
     })
   })
 

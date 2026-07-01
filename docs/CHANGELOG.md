@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+### Changed
+- **v1.0 监控方案由管理后台改为 Prometheus + Grafana，并取消 Admin 相关范围**：
+  - 删除后台管理相关功能范围：Admin API、Trace API、Admin 前端页面、ECharts 统计图表、系统级 `admin` 角色与 `require_admin` 权限校验。
+  - 权限模型简化为单一 Task Access（仅 owner 可访问自己的任务），`users.role` 枚举由 `('user','admin')` 缩减为 `('user')`；错误码 E2002 含义由「非 owner 且非 admin」改为「非 owner」；删除 E2009（`AdminRequired`）。
+  - Phase 6 排期标题由「打磨上线 + 管理后台」改为「打磨上线 + 部署就绪」，仅保留 Docker、nginx、TTL 清理、`.env.example` 等部署就绪任务；新增 §7.1 Prometheus + Grafana 可观测性任务。
+  - 同步更新 `resource/docs/PRD.md`、`docs/ARCHITECTURE.md`、`resource/docs/API.md`、`docs/DATABASE.md`、`resource/docs/ROADMAP.md`、`frontend/docs/FRONTEND.md`、`frontend/docs/UIDESIGN.md`、`resource/docs/DEVELOPMENT.md`、`tests/TESTING_STRATEGY.md`、`README.md`、`CLAUDE.md`、`docs/decisions/INDEX.md`、`.claude/commands/review.md`，移除所有 Admin 相关描述。
+  - 代码层清理：删除 `frontend/src/views/admin/`、`frontend/src/components/layout/AdminLayout.vue`；清理 `frontend/src/router/index.js`、`frontend/src/components/layout/Sidebar.vue`、`frontend/src/stores/auth.js`、`frontend/src/App.vue` 中的 admin 路由/状态/菜单；清理 `app/core/permissions.py`、`app/dependencies.py`、`app/core/exceptions.py`、`app/api/research.py`、`app/models/user.py`、`app/core/utils.py` 中的 admin 权限/角色/文案；新增 Alembic 迁移 `e6f62d0a9f56` 收缩 `users.role` 枚举。
+  - 测试层清理：删除 `tests/conftest.py` 的 `valid_admin_token` / `admin_headers` fixtures、`tests/unit/models/test_user.py` 的 admin 角色用例、`tests/unit/api/test_research.py` 的 admin 访问/取消/retry 用例、`tests/unit/core/test_exceptions.py` 的 `AdminPermissionRequiredException` 用例、`frontend/tests` 中 admin 路由守卫与 authStore `isAdmin` 用例。
+
 ### Fixed
 - **人工评估聚合分无法被 `eval_offline.py` 加载**：`app/evaluation/manual.py::validate_manual_record` 要求维度评分为 `int`，聚合后的平均分（如 4.7）被判定为越界并跳过；`app/evaluation/models.py::ManualEvaluationRecord.from_dict` 还将浮点分 `int()` 截断。修复：校验逻辑接受 `int | float`；`ManualDimensionScore.score` 类型改为 `float`；`from_dict` 改用 `float()` 保留小数。新增 `tests/unit/evaluation/test_manual.py::test_浮点评分校验通过且不被截断` 回归测试。
 - **Agent SSE 日志暴露内部敏感/冗长信息**：前端 Step 日志中出现 `plan_tool 结果：planning 阶段执行失败: 500: {'code': 'E3101', ...}` 等包含原始异常 JSON 与 LLM 输出细节的内容，以及 `调用 memory_tool({"limit":5,"operation":"read"})`、`memory_tool 结果：已返回最近 5 条 Working Memory 记录（最近 phase=rerank，最近 tool=rerank_tool）` 等暴露工具参数与内部状态的内容。修复：

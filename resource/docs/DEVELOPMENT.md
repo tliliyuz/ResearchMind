@@ -93,7 +93,7 @@ ResearchMind/
 │   │   ├── exceptions.py           # AppException 异常体系（code/message/detail）
 │   │   ├── llm.py                  # DeepSeek SDK 封装（OpenAI 兼容）
 │   │   ├── security.py             # JWT 生成/验证 + 密码哈希
-│   │   ├── permissions.py          # require_task_accessible / require_admin
+│   │   ├── permissions.py          # require_task_accessible / require_task_owner
 │   │   ├── cost_tracker.py         # Token 用量与成本追踪（中英文自适应算法）
 │   │   ├── redis_client.py         # Redis 客户端（Celery broker + result backend）
 │   │   ├── logging_config.py       # 日志配置
@@ -140,13 +140,7 @@ ResearchMind/
 │   │   ├── views/                  # 页面
 │   │   │   ├── LoginPage.vue       # 登录/注册页
 │   │   │   ├── ResearchPage.vue    # 研究页（核心）：创建态/运行态/完成态三态切换
-│   │   │   ├── HistoryPage.vue     # 研究任务历史列表（分页、按状态筛选）
-│   │   │   └── admin/
-│   │   │       ├── StatsPage.vue         # 系统统计（数据总览 + ECharts 图表）
-│   │   │       ├── AdminTaskList.vue   # 全部研究任务（跨用户），可查看/删除/取消
-│   │   │       ├── AdminTaskDetail.vue # 任务详情（Pipeline 阶段 + Steps + Trace）
-│   │   │       ├── AdminUserList.vue   # 用户管理列表（筛选+操作菜单）
-│   │   │       └── AdminUserDetail.vue # 用户详情（统计+快捷操作）
+│   │   │   └── HistoryPage.vue     # 研究任务历史列表（分页、按状态筛选）
 │   │   │
 │   │   ├── components/
 │   │   │   ├── task/               # 研究页运行态组件
@@ -166,11 +160,10 @@ ResearchMind/
 │   │   │   │   └── CanceledView.vue     # 任务取消展示
 │   │   │   └── layout/             # 布局组件
 │   │   │       ├── AppLayout.vue   # 布局容器（Sidebar + 主内容）
-│   │   │       ├── Sidebar.vue     # 侧边栏（历史任务列表 + 导航）
-│   │   │       └── AdminLayout.vue # Admin 布局（独立 Admin 侧边栏 + 内容区）
+│   │   │       └── Sidebar.vue     # 侧边栏（历史任务列表 + 导航）
 │   │   │
 │   │   ├── stores/                 # Pinia 状态管理
-│   │   │   ├── auth.js             # 认证状态（user/token/isAdmin/login/logout/refresh）
+│   │   │   ├── auth.js             # 认证状态（user/token/login/logout/refresh）
 │   │   │   ├── task.js             # 任务状态（taskList/current/sseStatus/progress/create/cancel/retry）
 │   │   │   └── report.js           # 报告状态（report/loading/sections/evidence/trace）
 │   │   │
@@ -180,10 +173,7 @@ ResearchMind/
 │   │   │   └── research.js         # 研究任务 CRUD + SSE 连接管理
 │   │   │
 │   │   ├── router/
-│   │   │   └── index.js            # Vue Router + 路由守卫（认证/Admin 三级）
-│   │   │
-│   │   ├── composables/
-│   │   │   └── useECharts.js       # ECharts 动态加载 composable（响应式 resize + dispose）
+│   │   │   └── index.js            # Vue Router + 路由守卫（公开/需登录 两级）
 │   │   │
 │   │   ├── styles/
 │   │   │   └── global.css          # 全局样式（Design Token --rm-* CSS 变量）
@@ -523,16 +513,9 @@ now = datetime.utcnow()  # 已弃用且不带 tzinfo
 - Service 层在调用 `task.delay()` 分发异步任务前，必须显式 `await db.commit()`——`get_db()` 的自动提交发生在路由返回之后，与 Celery Worker 消费之间存在竞态窗口。
 - 当 service 函数与 Celery task 同名时，task 导入必须加 `_task` 后缀别名。
 
-#### 权限分离
+#### 权限模型
 
-权限分为两层，**禁止混用**：
-
-| 层级 | 语义 | 函数 |
-|:---|:---|:---|
-| Task Access | "用户能否访问这个研究任务" | `require_task_accessible` |
-| System Permissions | "用户是否有系统级管理权限" | `require_admin` |
-
-详见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)。
+v1.0 仅保留 Task Access 一层权限：用户只能访问自己创建的研究任务。详见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)。
 
 #### Token 估算
 

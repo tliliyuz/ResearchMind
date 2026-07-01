@@ -197,11 +197,11 @@ class TestUsernameExistsException:
 # 模式示例：成功/失败成对
 class TestCreateAccessToken:
     def test_payload包含sub_username_role三个字段(self):
-        token = create_access_token(user_id=42, username="bob", role="admin")
+        token = create_access_token(user_id=42, username="bob", role="user")
         payload = decode_access_token(token)
         assert payload["sub"] == "42"
         assert payload["username"] == "bob"
-        assert payload["role"] == "admin"
+        assert payload["role"] == "user"
 
     def test_过期token_decode返回空dict(self):
         # 构造已过期的 JWT
@@ -279,7 +279,7 @@ async def test_timeout错误重试3次后抛出LLMTimeoutException(self):
 | 模块 | 覆盖要点 |
 |:---|:---|
 | `core/token_counter.py` | 中英文自适应算法：纯英文 ratio 4.0 / 纯中文 ratio 1.5 / 混合>30%中文用中文 ratio / 临界点 30% / 空字符串返回 1 |
-| `core/permissions.py` | Task Access（`require_task_accessible`）+ System Permissions（`require_admin`）两层权限，**禁止混用** |
+| `core/permissions.py` | Task Access（`require_task_accessible`）：仅 owner 可访问自己的任务 |
 | `core/sse.py` | `format_sse_event()` JSON 序列化 + 中文保留 / `format_sse_heartbeat()` / `stream_with_heartbeat()` 静默触发心跳 |
 | `middleware/rate_limit_middleware.py` | Redis Lua 限流逻辑、路由分组、阈值计算 |
 | `middleware/auth_middleware.py` | 有效 token → 注入 user_id / 无效 token → 401 / 无 token → 401 |
@@ -341,10 +341,10 @@ async def test_timeout错误重试3次后抛出LLMTimeoutException(self):
 
 | 层级 | 测试对象 | 关键覆盖 |
 |:---|:---|:---|
-| **Store 单元测试** | `authStore` / `taskStore` | login/logout/refresh 并发防抖、`scheduleRefresh`、`isAdmin`、Pipeline 状态驱动 |
+| **Store 单元测试** | `authStore` / `taskStore` | login/logout/refresh 并发防抖、`scheduleRefresh`、Pipeline 状态驱动 |
 | **API 层单元测试** | Axios 拦截器 | Token 自动刷新（E1003/E1004）、并发请求防抖、错误码处理 |
-| **组件测试** | LoginPage / ResearchPage / HistoryPage / Admin | 表单校验、Tab 切换、loading 状态、错误提示、SSE 事件驱动的 UI 更新 |
-| **路由守卫测试** | Router Guards | 未登录 → `/login`、admin 守卫、公开页面、已登录访问 `/login` 重定向 |
+| **组件测试** | LoginPage / ResearchPage / HistoryPage | 表单校验、Tab 切换、loading 状态、错误提示、SSE 事件驱动的 UI 更新 |
+| **路由守卫测试** | Router Guards | 未登录 → `/login`、公开页面、已登录访问 `/login` 重定向 |
 
 ### 5.2 Auth Store 测试要点（核心示例）
 
@@ -381,9 +381,9 @@ it('未登录访问需要认证的页面_重定向到/login', async () => {
   expect(router.currentRoute.value.path).toBe('/login')
 })
 
-it('非admin访问/admin_重定向到/research', async () => {
-  store.user = { id: 1, username: 'user', role: 'user' }
-  await router.push('/admin')
+it('已登录访问/login_重定向到/research', async () => {
+  store.user = { id: 1, username: 'user' }
+  await router.push('/login')
   expect(router.currentRoute.value.path).toBe('/research')
 })
 ```
@@ -649,7 +649,7 @@ with pytest.raises(Exception):
 | **Phase 2** | Task CRUD API、TaskStateResolver 三层状态计算、Planner/Searcher/Fetcher 阶段、SSE 事件流、Celery 幂等锁、前端 ResearchPage 三态切换 | Pipeline 状态机死锁 / 竞态 |
 | **Phase 3** | BM25 粗筛集成、LLM Rerank、Synthesis、Evidence Graph Build、Report Render、Cancel API、全链路集成测试、前端 Evidence Graph 双向联动 | CAS 并发更新丢失 / 证据-来源关联断裂 |
 | **Phase 4** | Execution Context 持久化、Retry API、CAS 更新、限流激活、断点续跑集成测试（`test_pipeline_retry.py`）、Worker 崩溃恢复（启动恢复 `test_startup_recovery.py`、超时监察 `test_worker_timeout.py`、任务级锁 `tasks/test_lock.py`）、错误信息清洗（`core/test_exceptions.py` §4.2.1） | 断点续跑状态恢复不完整 |
-| **Phase 5** | Admin API、Trace API、ECharts 统计、全量回归、Pipeline 并发压测、限流阈值调优、Trace 崩溃恢复（`test_trace_crash_recovery.py`）、入口三元检查（`tasks/test_research_task.py`） | 高并发下 Pipeline 吞吐瓶颈 |
+| **Phase 5** | Agent Runtime 全量回归、Pipeline 并发压测、限流阈值调优、Trace 崩溃恢复（`test_trace_crash_recovery.py`）、入口三元检查（`tasks/test_research_task.py`） | 高并发下 Pipeline 吞吐瓶颈 |
 | **Phase 6** | v1.5/v2.0 功能增量（DAG 并行、多角色、SearXNG 降级）按需测试 | 按新增功能评估 |
 
 ---

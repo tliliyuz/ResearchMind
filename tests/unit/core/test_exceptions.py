@@ -7,7 +7,6 @@
 import pytest
 
 from app.core.exceptions import (
-    AdminPermissionRequiredException,
     AppException,
     CeleryWorkerLostException,
     EvidenceGraphBuildFailedException,
@@ -231,13 +230,6 @@ class TestInvalidRequirementsException:
         exc = InvalidRequirementsException()
         assert exc.error_code == "E2008"
         assert exc.status_code == 400
-
-
-class TestAdminPermissionRequiredException:
-    def test_错误码为E2009_HTTP状态码为403(self):
-        exc = AdminPermissionRequiredException()
-        assert exc.error_code == "E2009"
-        assert exc.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════

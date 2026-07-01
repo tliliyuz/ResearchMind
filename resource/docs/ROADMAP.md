@@ -11,7 +11,7 @@
 >
 > 本章子节编号格式为 `{章节号}.{序号}`，全部两级，序号连续。每个 Phase 内按「功能 → 测试 → 🚫 推迟项」固定顺序排列。
 >
-> 每个子节标题标注 `[角色]` 标签，角色包括：后端 / 前端 / 数据库 / 测试 / 文档 / 运维 / 体验完善 / 管理后台 / 基础设施 / 高级功能。
+> 每个子节标题标注 `[角色]` 标签，角色包括：后端 / 前端 / 数据库 / 测试 / 文档 / 运维 / 体验完善 / 基础设施 / 高级功能。
 >
 > 🚫 推迟项统一编号，放在 `[测试]` 之后。
 >
@@ -27,9 +27,9 @@
 ```
 Phase 1          Phase 2               Phase 3               Phase 4              Phase 5                     Phase 6           Phase 7
 骨架搭建          研究任务 + Pipeline     Pipeline 后半段        断点续跑 + 基础设施    Agent Runtime               打磨上线           迭代优化
-+ 认证系统        前半段(Plan→Fetch)     (Rerank→Report)       加固                   Phase 1-3                   + 管理后台        不设时限
++ 认证系统        前半段(Plan→Fetch)     (Rerank→Report)       加固                   Phase 1-3                   + 部署就绪        不设时限
                                                                             (Tool System / Working Memory)
-3-4天             4-5天                 4-5天                 3-4天                 5-7天                       4-5天
+3-4天             4-5天                 4-5天                 3-4天                 5-7天                       3-4天
 
   ├────────────────┼────────────────────┼────────────────────┼───────────────────┼───────────────────────────┼───────────────┤
 Week 1            Week 1-2             Week 2-3              Week 3-4            Week 4-5                   Week 5-6         Week 6+
@@ -62,7 +62,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
 | ✅ | Alembic 初始化 | `alembic init` + `env.py` 配置（`target_metadata` 指向 ResearchMind Model） |
-| ✅ | `users` 表 | `id BIGINT PK` / `username VARCHAR(64) UNIQUE` / `password_hash VARCHAR(256)` / `role ENUM(user,admin)` / `status ENUM(active,disabled)` |
+| ✅ | `users` 表 | `id BIGINT PK` / `username VARCHAR(64) UNIQUE` / `password_hash VARCHAR(256)` / `role ENUM(user)` / `status ENUM(active,disabled)` |
 | ✅ | `refresh_tokens` 表 | `id BIGINT PK` / `user_id FK→users` / `token_hash VARCHAR(256)` (SHA-256) / `expires_at` / `revoked_at` / 复合索引 `(user_id, revoked_at, expires_at)` |
 | ✅ | `research_tasks` 表 | `id UUID PK` / `user_id FK→users(RESTRICT)` / `topic` / `requirements JSON` / `status ENUM(7态)` / `current_phase ENUM(7阶段)` / `execution_context JSON` / 统计字段 / 错误字段 / 时间字段 |
 | ✅ | `research_steps` 表 | `id UUID PK` / `task_id FK→tasks(CASCADE)` / `step_type ENUM(7类)` / `parent_step_id FK→steps(SET NULL)` / `status ENUM(6态)` / `input/output JSON` / 重试/错误/性能字段 |
@@ -85,8 +85,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Token 估算 | `app/core/token_counter.py` — 中英文自适应算法（中文>30%→1.5，否则 4.0） | 直接实现，零改动 |
 | ✅ | JWT 安全模块 | `app/core/security.py` — `hash_password` / `verify_password` / `create_access_token` / `decode_access_token` / `create_refresh_token` | 直接实现，映射 `users` 表字段 |
 | ✅ | JWT 认证中间件 | `app/middleware/auth_middleware.py` — ASGI 中间件，验证 Bearer Token，写入 `request.state` | 直接实现，错误码 E1004，detail 结构化 JSON |
-| ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验）/ `require_admin` | 直接实现，`get_db` 使用 `async_session_factory` 创建会话 |
-| ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` / `require_admin` 三层分离 | 直接实现，含 Task 级权限检查逻辑 |
+| ✅ | 依赖注入 | `app/dependencies.py` — `get_db`（异步会话 yield + commit/rollback）/ `get_current_user`（request.state + DB 状态校验） | 直接实现，`get_db` 使用 `async_session_factory` 创建会话 |
+| ✅ | 权限中间件 | `app/core/permissions.py` — `require_task_accessible` / `require_task_owner` 两层分离 | 直接实现，含 Task 级权限检查逻辑 |
 | ✅ | 时区策略 | 四层 UTC 统一（MySQL → 后端 → API → 前端） | 实现细节见 [DATABASE.md §0](../../docs/DATABASE.md#0-时区约定)；`UTCDateTime` 与 `SET time_zone='+00:00'` 已就位（Phase 1 脚手架提前完成） |
 | ✅ | SSE 流式框架 | `app/core/sse.py` — 手动 `StreamingResponse` + 15s 心跳注释帧 | 保留 SSE 传输层框架，Phase 2-3 替换全部事件类型 |
 | ✅ | Trace 追踪器 | `app/core/trace_recorder.py` — Per-stage 计时 + JSON 字段 + Pipeline 七阶段 | 直接实现，阶段名称 Planning→Search→Fetch→Rerank→Synthesis→EvidenceGraph→Render |
@@ -119,11 +119,11 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | Design Token 系统 | `styles/global.css` — `--rm-*` CSS 变量全量定义（品牌色 / 语义色 / 中性色 / 字体 / 间距 / 圆角 / 阴影 / 过渡 / Element Plus 覆盖）。采用 `--rm-` 前缀全量变量定义 | UIDESIGN.md §1 |
 | ✅ | Axios 实例 + 拦截器 | `api/index.js` — Axios 实例（baseURL + 30s 超时）+ 请求拦截器（附 `Authorization: Bearer <access_token>`）+ 响应拦截器（401+E1003 → `authStore.refresh()` → 重放原请求 + `isRefreshing` 并发防抖 + `scheduleRefresh` 定时器）。Token 过期错误码 E1003 | FRONTEND.md §1.3 |
 | ✅ | Auth API 封装 | `api/auth.js` — `login()` / `register()` / `refresh()` / `logout()` / `changePassword()` 五个函数 | FRONTEND.md §3 |
-| ✅ | AuthStore (Pinia) | `stores/auth.js` — `user` / `token` / `isAdmin` / `login()` / `logout()` / `refresh()` / `register()` | FRONTEND.md §1.2 |
-| ✅ | 路由骨架 + 守卫 | `router/index.js` — 路由表（§2.1 全部路由）+ 三级路由守卫（公开/需登录/需管理员） | FRONTEND.md §2 |
+| ✅ | AuthStore (Pinia) | `stores/auth.js` — `user` / `token` / `login()` / `logout()` / `refresh()` / `register()` | FRONTEND.md §1.2 |
+| ✅ | 路由骨架 + 守卫 | `router/index.js` — 路由表（§2.1 全部路由）+ 两级路由守卫（公开/需登录） | FRONTEND.md §2 |
 | ✅ | LoginPage | `views/LoginPage.vue` — 品牌区（Logo + 标题「ResearchMind」+ 副标题「可审计的结构化研究引擎」）+ Tab 切换（登录/注册）+ 表单（用户名+密码，图标前缀）+ 错误提示 + 提交按钮 loading + 底部互转链接 | FRONTEND.md §3 |
 | ✅ | AppLayout + Sidebar | `components/layout/AppLayout.vue` + `Sidebar.vue` — 双栏布局（Sidebar 260px/64px 收起 + 主内容区）+ 侧边栏（Logo + 新建研究按钮 + 历史任务列表 + 导航链接 + 用户栏头像/用户名 + 用户菜单卡片 + 展开/收起切换动画）。侧边栏导航项为历史任务 | FRONTEND.md §4.6 |
-| ✅ | 用户菜单卡片 + 修改密码对话框 | Sidebar 内嵌用户菜单（修改密码 / 管理后台[admin] / 退出登录）+ `el-dialog` 修改密码弹窗（420px，旧密码+新密码+确认新密码，含一致性校验） | FRONTEND.md §4.6.4 / §4.7 |
+| ✅ | 用户菜单卡片 + 修改密码对话框 | Sidebar 内嵌用户菜单（修改密码 / 退出登录）+ `el-dialog` 修改密码弹窗（420px，旧密码+新密码+确认新密码，含一致性校验） | FRONTEND.md §4.6.3 / §4.7 |
 | ✅ | App.vue 根组件 | `<router-view />` + 全局样式引入 | — |
 
 ### 2.6 🚫 本阶段不做的
@@ -132,7 +132,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 |:---|:---|:---|
 | ResearchPage（创建态/运行态/完成态） | Phase 2-3 | Phase 1 先搭建骨架，核心业务页面在 Phase 2-3 实现 |
 | HistoryPage | Phase 2 | 依赖研究任务列表 API（Phase 2 后端） |
-| Admin 管理后台 | Phase 6 | 先完成用户侧核心链路 |
 | Markdown 渲染器 | Phase 3 | 依赖报告渲染 API（Phase 3 后端） |
 
 ### 2.7 [测试] Phase 1 测试
@@ -149,8 +148,8 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | 前端 LoginPage 组件测试 | 组件测试 | 表单渲染 / Tab 切换（登录↔注册）/ 提交按钮 + loading / 错误提示 / 登录成功跳转 / 注册成功切回登录 |
 | ✅ | 前端 AppLayout 组件测试 | 组件测试 | 布局渲染 / Sidebar 存在性 / `<slot />` 内容区 |
 | ✅ | Refresh Token 接口测试 | 接口测试 | Token 刷新 / Rotation（旧 token 失效）/ 主动吊销（logout/改密）/ 泄露检测 E1009 / 过期 E1006 / 禁用用户 E1010 |
-| ✅ | 前端路由守卫测试 | 组件测试 | 未登录重定向到 `/login` / 已登录访问 `/login` 重定向 `/research` / 非 admin 访问 `/admin/*` 重定向 |
-| ✅ | 前端 AuthStore 测试 | 单元测试 | `login()` token 存储 / `logout()` token 清除 / `refresh()` 自动刷新 / `isAdmin` 计算属性 |
+| ✅ | 前端路由守卫测试 | 组件测试 | 未登录重定向到 `/login` / 已登录访问 `/login` 重定向 `/research` |
+| ✅ | 前端 AuthStore 测试 | 单元测试 | `login()` token 存储 / `logout()` token 清除 / `refresh()` 自动刷新 |
 | ✅ | 前端 Token 刷新测试 | 单元+组件 | Axios 拦截器请求/响应 / authStore Token 管理 / `scheduleRefresh` 定时器 / `isRefreshing` 并发防抖 / 刷新失败→跳转 `/login` |
 
 ---
@@ -169,7 +168,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | ✅ | 研究任务详情 API | `GET /api/research/{task_id}` — 任务状态 + `current_phase` + `progress` 快照（`execution_context.progress` 优先，fallback 统计列） | 决策 #3 |
 | ✅ | 研究任务删除 API | `DELETE /api/research/{task_id}` — FK CASCADE 级联清理全部派生数据（bulk `sa_delete` 绕过 ORM 关系处理） | 决策 #4 |
 | ✅ | Task 状态机 | `app/core/task_state_resolver.py` — `TaskStateResolver`：所有 Step 终态后统一推导 Task State（FATAL→FAILED / all COMPLETED→COMPLETED / 部分失败→Evidence Threshold 判定：`min_evidence = max(5, ceil(max_sources * 0.4))`） | 决策 #5 |
-| ✅ | `require_task_accessible` 依赖注入 | `app/dependencies.py` — Task 级权限：owner→允许 / admin→允许（审计）/ 其他→E2002 | 决策 #6 |
+| ✅ | `require_task_accessible` 依赖注入 | `app/dependencies.py` — Task 级权限：owner→允许 / 其他→E2002 | 决策 #6 |
 
 ### 3.2 [后端] Celery 异步 Pipeline 编排
 
@@ -248,7 +247,6 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 断点续跑（Retry 从 Checkpoint 恢复） | Phase 4 | Phase 2 已实现 execution_context 原子更新 + checkpoint.saved SSE 事件；Phase 4 补齐持久化 checkpoint + Retry API |
 | Cancel 中断（后端） | Phase 3 | Phase 2 已实现前端取消 UI；后端 `POST /api/research/{id}/cancel` 在 Phase 3 §4.5 实现 |
 | Rerank / Synthesis / Evidence Graph / Render | Phase 3 | Phase 2 聚焦 Pipeline 前半段 + SSE 框架 |
-| 管理后台 | Phase 6 | 先完成用户侧核心链路 |
 | ResearchPage 运行态（Pipeline 进度可视化） | Phase 3 | 依赖 Phase 3 后端全链路跑通 + 完整 SSE 事件流 |
 | ResearchPage 完成态（报告查看） | Phase 3 | 依赖 Phase 3 后端 Report Render |
 | `requirements` 扩展字段（`focus_areas`/`exclude_domains`/`time_range`） | v1.5 | MVP 仅支持核心 4 字段 |
@@ -258,7 +256,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 测试类型 | 说明 |
 |:---|:---|:---|:---|
-| ✅ | 研究任务 CRUD API 接口测试 | 接口测试 | POST `/api/research` 正常创建(201) + topic 超长(422) + task_type 非法(422) + 缺少 requirements(422)；GET 列表（空列表/分页/status 筛选/按 created_at DESC）；GET 详情（含完整字段/错误信息/progress/E2001/E2002/admin 审计）；DELETE（正常删除/级联清理步骤/不存在 E2001/无权 E2002）；未登录 401 |
+| ✅ | 研究任务 CRUD API 接口测试 | 接口测试 | POST `/api/research` 正常创建(201) + topic 超长(422) + task_type 非法(422) + 缺少 requirements(422)；GET 列表（空列表/分页/status 筛选/按 created_at DESC）；GET 详情（含完整字段/错误信息/progress/E2001/E2002）；DELETE（正常删除/级联清理步骤/不存在 E2001/无权 E2002）；未登录 401 |
 | ✅ | TaskStateResolver 测试 | 单元测试 | FATAL→FAILED / all COMPLETED→COMPLETED / 部分完成含充分证据→PARTIALLY_COMPLETED / 部分完成证据不足→FAILED(E3103) / all SKIPPED→FAILED / 空步骤保持原状态 / 未终态不触发推导 |
 | ✅ | 研究任务 Schema 校验测试 | 单元测试 | `ResearchCreateRequest` topic 长度/纯空格/task_type 枚举/depth 枚举/max_sources 范围/language 默认值 / `ProgressSchema` progress 范围/边界值 |
 | ✅ | 研究任务 Service 单元测试 | 单元测试 | `create_task` 正常创建+DB 写入+首个 planning step+三种 task_type+requirements 存储+用户隔离+topic 超长 422 / `get_task_list` 空列表/单条/多条 DESC/分页第一页+第二页+超出范围/status 筛选/用户隔离/page_size 上限 100/page 自动修正 / `get_task_detail` 完整字段/running 含 phase/failed 含错误/execution_context 优先/fallback 统计列/进度为 0 / `delete_task` 删除后不存在/级联删除步骤/仅删除指定任务 |
@@ -429,7 +427,7 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 | 推迟项 | 排期 | 原因 |
 |:---|:---|:---|
 | 数据 TTL 自动清理（Celery Beat） | Phase 6 | Phase 4 先做核心恢复机制，定时清理与部署一起交付 |
-| Loki + Grafana 部署 | Phase 7（可选） | 结构化日志已就绪，`jq` 命令行可做基本聚合分析 |
+| Prometheus + Grafana 部署 | Phase 6 | 可观测性在部署阶段统一交付 |
 | Task 级 Rerun（全新 Execution Context） | v1.5 | 当前 Retry 复用原 context 继续执行。真正「全新 context」的 Task-level Rerun 排 v1.5 |
 | 滑动窗口摘要压缩 | Phase 7 | ResearchMind 无长对话上下文需求（每次 Study 独立） |
 
@@ -522,79 +520,50 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 ---
 
-## 7. Phase 6：打磨上线 + 管理后台（4-5 天）
+## 7. Phase 6：打磨上线 + 部署就绪（3-4 天）
 
-**目标**：管理后台 + 部署就绪，可以上线。
+**目标**：系统可观测、部署就绪，可以上线。v1.0 不维护独立管理后台，监控走 Prometheus + Grafana。
 
-### 7.1 [管理后台] 管理后台 API
+### 7.1 [运维] 可观测性
 
-| 状态 | 任务 | 说明 |
-|:---|:---|:---|
-| ⏳ | Admin Pydantic Schema | `AdminStatsResponse`（7 统计维度：总任务数/运行中/完成/失败/用户数/Token 消耗/预估成本）/ `AdminTaskItem` / `AdminTaskListResponse` / `AdminUserItem` / `AdminUserListResponse` |
-| ⏳ | Admin Service | `app/services/admin_service.py` — `get_stats()` / `list_all_tasks()`（筛选：status/user_id/搜索 + 分页）/ `list_all_users()`（筛选：role/status/搜索 + 分页） |
-| ⏳ | Admin API 端点 | `app/api/admin.py` — `GET /api/admin/stats` / `GET /api/admin/tasks` / `GET /api/admin/tasks/{task_id}` / `DELETE /api/admin/tasks/{task_id}` / `GET /api/admin/users` / `GET /api/admin/users/{user_id}` / `PUT /api/admin/users/{user_id}/status` + `require_admin` 依赖注入 |
-
-### 7.2 [高级功能] Trace 链路追踪
+监控采用 Prometheus + Grafana，不维护独立 Admin 后台。
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | Trace 数据持久化 | 每 Step 完成后写入 `research_tasks.trace` JSON 列（各阶段 `duration_ms` + `input_tokens`/`output_tokens` + `model` + `status`） |
-| ⏳ | Trace API | `GET /api/admin/traces`（分页+筛选：status/日期范围）+ `GET /api/admin/traces/{task_id}` |
-| ⏳ | 统计增强接口 | `GET /api/admin/stats` 响应新增 `charts` 字段：研究量趋势（按天聚合）/ 响应时间分布（P50/P95/P99）/ Token 使用统计（按 task_type 分拆） |
+| ⏳ | Prometheus 指标暴露 | `app/metrics/` 基于 `prometheus_client`：任务状态计数 / Pipeline 阶段耗时 / LLM Token 消耗 / 队列长度 / Worker 心跳 |
+| ⏳ | Grafana Dashboard | Provisioned Dashboards：任务量趋势 / 阶段耗时 P50/P95/P99 / Token 使用分布 / 失败率 / Worker 健康 |
+| ⏳ | Celery / Redis 监控 | Flower 或 Prometheus Redis Exporter 监控 Broker 与队列 |
 
-### 7.3 [前端] Admin 管理后台 + ECharts 统计
-
-| 状态 | 任务 | 说明 | 依赖决策 |
-|:---|:---|:---|:---|
-| ⏳ | AdminLayout | `components/layout/AdminLayout.vue` — 独立 Admin 侧边栏（240px）+ 主内容区。菜单项：📊 系统统计 / 📋 任务管理 / 👥 用户管理 / ← 返回研究 | FRONTEND.md §6.1 |
-| ⏳ | AdminStats 统计页 | `views/admin/StatsPage.vue` — 6 统计卡片（用户总数 / 任务总数 / 完成任务数 / 失败任务数 / 证据总数 / 来源总数）+ ECharts 图表（任务量趋势折线图 / 任务耗时分布柱状图 P50/P95/P99 / 研究类型分布饼图 comparison/explainer/analysis） | FRONTEND.md §6.2 |
-| ⏳ | AdminTaskList 任务管理 | `views/admin/AdminTaskList.vue` — 跨用户全部研究任务表格（含 `username` 列，筛选：`user_id`/`status`/`task_type`/搜索，分页 + 操作[查看详情/取消/删除]）。删除二次确认 + `ElLoading` 全屏遮罩 + 本地 `filter()` 移除 + 空页回退 | FRONTEND.md §6.3 |
-| ⏳ | AdminTaskDetail 任务详情 | `views/admin/AdminTaskDetail.vue` — 任务信息卡片 + Pipeline 阶段 + Step 列表 + Trace 摘要 | — |
-| ⏳ | Admin API 封装 | `api/admin.js` — `getStats()` / `getAllTasks()` / `getTaskDetail()` / `deleteTask()` / `getAllUsers()` / `getUserDetail()` / `changeUserStatus()` / `resetUserPassword()` | — |
-| ⏳ | AdminUserList 用户管理 | `views/admin/AdminUserList.vue` — 用户列表（表格：用户名/角色/状态/任务数/最后活跃/操作，筛选：角色/状态/搜索，分页 + 操作菜单[查看详情/禁用启用/重置密码]）。统计列为任务数/完成数/失败数 | FRONTEND.md §6.4 |
-| ⏳ | AdminUserDetail 用户详情 | `views/admin/AdminUserDetail.vue` — 用户信息卡片 + 统计卡片（任务总数/完成数/失败数/证据数）+ 快捷操作（禁用/启用 + 重置密码） | FRONTEND.md §6.4 |
-| ⏳ | ECharts 组合式函数 | `composables/useECharts.js` — 响应式 resize + ResizeObserver + dispose，待 Phase 7 集成到 StatsPage | FRONTEND.md §1.4 |
-| ⏳ | 图表配置常量 | `constants/charts.js` — 颜色/样式/tooltip 配置（对齐 `--rm-*` Design Token） | — |
-| ⏳ | D3.js Evidence Graph 可视化 [可选] | Evidence Graph 节点关系力导向图（D3.js force simulation）：Evidence items → nodes / cluster → groups / conflicts → dashed edges。低优先级，Phase 6 时间允许则做 | — |
-
-### 7.4 [运维] 部署就绪
+### 7.2 [运维] 部署就绪
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
 | ⏳ | README.md 完善 | 项目简介 + 快速开始（Docker Compose）+ 文档索引 + 环境变量说明 |
 | ⏳ | Dockerfile × 2 | `Dockerfile.backend`（FastAPI + Celery Worker）+ `Dockerfile.frontend`（Nginx + 静态资源） |
-| ⏳ | docker-compose.yml | 4 服务编排（MySQL + Redis + Backend + Celery Worker）+ 数据卷持久化 + 网络隔离 |
+| ⏳ | docker-compose.yml | 5 服务编排（MySQL + Redis + Backend + Celery Worker + Prometheus/Grafana）+ 数据卷持久化 + 网络隔离 |
 | ⏳ | nginx.conf（前端） | 反向代理 + SSE buffering 关闭 + 静态资源 SPA fallback + `client_max_body_size` |
 | ⏳ | 数据 TTL 清理 | Celery Beat 定时任务：`research_tasks` 30 天清理 / SSE 日志 7 天轮转 / 应用日志 14 天 logrotate |
-| ⏳ | `.env.example` 更新 | 新增 `ENV` / `CORS_ORIGINS` / `RATE_LIMIT_*` 等生产配置项 |
+| ⏳ | `.env.example` 更新 | 新增 `ENV` / `CORS_ORIGINS` / `RATE_LIMIT_*` / `PROMETHEUS_*` 等生产配置项 |
 
-### 7.5 🚫 本阶段不做的
+### 7.3 🚫 本阶段不做的
 
 | 推迟项 | 排期 | 原因 |
 |:---|:---|:---|
 | v1.5 需求字段（`focus_areas`/`exclude_domains`/`time_range`） | v1.5 | MVP 仅核心 4 字段 |
 | 多报告模板渲染（技术版/学术版） | v1.5 | v1.0 按 `task_type` 自动选择单模板 |
 | 审计日志（`audit_log` hook） | v1.5 | `require_task_accessible` 中已预留 hook 调用点 |
-| 用户审计日志（`user_operations` 表） | v2 | v1.0 Admin 先做 CRUD + 角色管理 |
+| 用户审计日志（`user_operations` 表） | v2 | v1.0 无管理后台，仅 owner 视角 |
 | 分级 LLM（Planning/Report 用 Opus，Search/Rerank 用 Haiku） | v2 | MVP 全链路 deepseek-v4-pro 单一模型 |
 
-### 7.6 [测试] Phase 6 测试
+### 7.4 [测试] Phase 6 测试
 
 | 状态 | 任务 | 测试类型 | 说明 |
 |:---|:---|:---|:---|
-| ⏳ | Admin 接口测试 | 接口+单元 | Service 层统计聚合 / API 层 CRUD + 权限矩阵（非 admin→E2009）/ 用户管理（禁用/启用） |
-| ⏳ | Trace 接口测试 | 接口+单元 | Trace 列表（分页+筛选）/ Trace 详情（7 阶段数据完整性）/ task_id 不存在的 Trace |
-| ⏳ | ECharts 统计接口测试 | 单元测试 | trend 聚合 / latency 分位数 / tokens 聚合 |
 | ⏳ | 全量回归测试 | 回归测试 | 遍历完整测试集（单轮 + 断点续跑 + 3 种 task_type） |
 | ⏳ | 压测 | 性能测试 | Locust 4 场景（基准/日常/峰值/极限），P50≤2min / P99≤4min。压测完成后据此调整限流阈值 |
 | ⏳ | 最终人工报告质量评估 | 人工评估 | 第 2 轮 9 题 × 4 维度评分，对比 Phase 3 基线，验证全链路优化效果 |
-| ⏳ | 前端 AdminStats 组件测试 | 组件测试 | 统计卡片数据渲染 / ECharts 图表渲染 / 空数据边界 / ResizeObserver 响应式 |
-| ⏳ | 前端 AdminTaskList 组件测试 | 组件测试 | 表格渲染 / 筛选联动（重置 currentPage=1）/ 删除确认→loading→行移除→空页回退 / 分页 / 空状态 |
-| ⏳ | 前端 AdminUserList 组件测试 | 组件测试 | 用户列表渲染 / 筛选（角色/状态/搜索）/ 操作菜单（禁用启用/resetPassword loading）/ 分页 |
-| ⏳ | 前端 AdminUserDetail 组件测试 | 组件测试 | 信息卡片渲染 / 统计卡片 / 快捷操作（禁用/重置密码）/ 错误处理 |
-| ⏳ | 前端 ECharts 图表组件测试 | 组件测试 | TrendChart + LatencyChart + PieChart = 含空数据边界（ResizeObserver mock + ECharts mock） |
-| ⏳ | 全量回归测试 | 回归测试 | 遍历完整测试集（前端组件 + 后端接口 + Pipeline 集成 + 断点续跑 + 3 种 task_type） |
-| ⏳ | 压测 | 性能测试 | Locust 4 场景（基准/日常/峰值/极限），P50≤2min / P99≤4min。压测完成后据此调整限流阈值 |
+| ⏳ | 可观测性验证 | 运维测试 | Prometheus 指标可达 / Grafana Dashboard 正常加载 / 告警规则（如任务失败率>20%）触发正常 |
+| ⏳ | 部署验证 | 运维测试 | Docker Compose 全量启动 / 健康检查通过 / SSE 端到端可用 |
 
 ---
 
@@ -645,7 +614,7 @@ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5 
   │            │            │            │            │            │            │
   ├─ 后端测试    ├─ 后端测试    ├─ 后端测试    ├─ 后端测试    ├─ 后端测试    ├─ 后端测试    ├─ 后端测试
   ├─ 前端测试    ├─ 前端测试    ├─ 前端测试    ├─ 前端测试    ├─ 前端测试    ├─ 前端测试    ├─ 前端测试     (不设时限)
-  (基础)      (创建+列表)   (进度+报告)   (刷新+Retry)  (Agent化)    (Admin+全量+压测)
+  (基础)      (创建+列表)   (进度+报告)   (刷新+Retry)  (Agent化)    (部署+全量+压测)
 ```
 
 ### 9.1 准入规则

@@ -1,5 +1,5 @@
 // 路由守卫测试 — 直接测试 src/router/index.js 导出的 authGuard + routes
-// 对齐 TESTING_STRATEGY.md §5.4：未登录→/login、已登录访问/login→/research、非admin→/admin重定向
+// 对齐 TESTING_STRATEGY.md §5.4：未登录→/login、已登录访问/login→/research
 //
 // 重要：import 真实 authGuard 函数和 routes，禁止复制生产代码。
 // Pinia 必须在 import 前激活，因为 authGuard 内部调用 useAuthStore()。
@@ -65,20 +65,6 @@ describe('路由守卫（真实 authGuard + routes）', () => {
     const router = buildRouter()
     await router.push('/login')
     expect(router.currentRoute.value.path).toBe('/research')
-  })
-
-  it('普通用户访问/admin_重定向到/research', async () => {
-    setupStore({ loggedIn: true, role: 'user' })
-    const router = buildRouter()
-    await router.push('/admin/stats')
-    expect(router.currentRoute.value.path).toBe('/research')
-  })
-
-  it('admin用户访问/admin_允许通过', async () => {
-    setupStore({ loggedIn: true, role: 'admin' })
-    const router = buildRouter()
-    await router.push('/admin/stats')
-    expect(router.currentRoute.value.path).toBe('/admin/stats')
   })
 
   it('已登录普通用户访问/research_允许通过', async () => {

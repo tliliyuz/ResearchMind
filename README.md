@@ -133,7 +133,6 @@ Agent Runtime 详细设计见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 | UI 组件库 | Element Plus | 主题色通过 `--rm-*` Design Token 覆盖 |
 | 状态管理 | Pinia | Vue 3 官方推荐 |
 | Markdown | markdown-it + highlight.js | 报告正文渲染 + 代码块高亮 |
-| 图表 | ECharts 6 | 管理后台统计可视化 |
 
 ---
 
@@ -184,7 +183,7 @@ Agent Runtime、Tool System、Working Memory 的详细设计见 [ARCHITECTURE.md
 
 ### 登录
 
-ResearchMind 入口，支持普通用户与管理员角色登录。
+ResearchMind 入口，支持普通用户登录。
 
 | 页面 | 截图 |
 |:---|:---|
@@ -339,7 +338,7 @@ ResearchMind/
 ├── frontend/
 │   ├── docs/                    # 前端设计文档（FRONTEND.md / UIDESIGN.md）
 │   ├── src/
-│   │   ├── views/               # 页面（LoginPage / ResearchPage / HistoryPage / ReportPage / Admin 管理后台）
+│   │   ├── views/               # 页面（LoginPage / ResearchPage / HistoryPage）
 │   │   ├── components/          # 组件
 │   │   ├── stores/              # Pinia 状态管理
 │   │   ├── api/                 # HTTP 请求封装

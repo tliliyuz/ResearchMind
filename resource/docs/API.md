@@ -97,14 +97,13 @@
 | 错误码 | HTTP 状态码 | 说明 |
 |:---|:---|:---|
 | E2001 | 404 | 任务不存在 |
-| E2002 | 403 | 无权访问该任务（非 owner 且非 admin） |
+| E2002 | 403 | 无权访问该任务（非 owner） |
 | E2003 | 409 | 当前任务状态不支持该操作 |
 | E2004 | 400 | 任务已被取消，无法继续 |
 | E2005 | 400 | 研究主题超过 500 字符 |
 | E2006 | 400 | task_type 不在 comparison / explainer / analysis 之内 |
 | E2007 | 400 | depth 取值非法（MVP 仅支持 quick） |
 | E2008 | 400 | requirements 字段缺失或非法 |
-| E2009 | 403 | 该操作需要管理员权限 |
 
 #### 研究执行错误（E3xxx）
 
@@ -484,7 +483,7 @@
 
 #### GET `/api/research/{task_id}`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 查询单个任务的状态与摘要信息。
 
@@ -535,7 +534,7 @@
 
 #### DELETE `/api/research/{task_id}`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 删除研究任务及其全部派生数据（Steps、Sources、Evidence、Report Sections）。通过 FK `ON DELETE CASCADE` 级联清理。
 
@@ -568,7 +567,7 @@
 
 #### POST `/api/research/{task_id}/cancel`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 取消正在运行的任务。Worker 收到中断信号后保存当前 checkpoint 并停止执行。
 
@@ -605,7 +604,7 @@
 
 #### POST `/api/research/{task_id}/retry`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 从最后 checkpoint 断点续跑。已完成的 Step 结果复用，不重新执行。
 
@@ -662,7 +661,7 @@
 
 #### GET `/api/research/{task_id}/report`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 获取完整的结构化研究报告（含 Evidence Graph 与 Trace）。
 
@@ -743,7 +742,7 @@
 
 #### GET `/api/research/{task_id}/state`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 获取执行状态快照（REST 版），是 SSE `task.status.snapshot` 事件的 REST 等价物，供前端断线恢复或轮询使用。
 
@@ -825,7 +824,7 @@
 
 #### GET `/api/research/{task_id}/stream`
 
-**权限**：user（需登录，仅 owner 或 admin）
+**权限**：user（需登录，仅 owner）
 
 SSE 连接端点，研究过程实时推送。事件协议详见 §4。
 
@@ -1051,14 +1050,13 @@ data: {"task_id": "550e8400-e29b-41d4-a716-446655440000", "iteration": 3, "phase
 | 错误码 | HTTP | 错误类型 | 说明 |
 |:---|:---|:---|:---|
 | E2001 | 404 | `TaskNotFound` | task_id 不存在 |
-| E2002 | 403 | `TaskNotOwned` | 无权访问该任务（非 owner 且非 admin 审计） |
+| E2002 | 403 | `TaskNotOwned` | 无权访问该任务（非 owner） |
 | E2003 | 409 | `InvalidTaskState` | 当前任务状态不支持该操作（如 RUNNING 不允许 retry） |
 | E2004 | 400 | `TaskCanceled` | 任务已被取消，无法继续 |
 | E2005 | 400 | `TopicTooLong` | 研究主题超过 500 字符 |
 | E2006 | 400 | `InvalidTaskType` | task_type 不在 comparison / explainer / analysis 之内 |
 | E2007 | 400 | `InvalidDepth` | depth 取值非法（MVP 仅支持 quick） |
 | E2008 | 400 | `InvalidRequirements` | requirements 字段缺失或非法 |
-| E2009 | 403 | `AdminRequired` | 该操作需要管理员权限 |
 
 ### 5.3 研究执行错误（E3xxx）
 
@@ -1351,19 +1349,19 @@ Content-Type: application/json
 | PUT | `/api/auth/password` | user | 改密并吊销全部 refresh_token |
 | POST | `/api/research` | user | 创建研究任务 |
 | GET | `/api/research` | user | 我的研究历史列表 |
-| GET | `/api/research/{task_id}` | user（owner + admin） | 任务状态 |
-| DELETE | `/api/research/{task_id}` | user（owner + admin） | 删除任务 |
-| POST | `/api/research/{task_id}/cancel` | user（owner + admin） | 取消任务 |
-| POST | `/api/research/{task_id}/retry` | user（owner + admin） | 断点续跑 |
-| GET | `/api/research/{task_id}/report` | user（owner + admin） | 获取报告 |
-| GET | `/api/research/{task_id}/stream` | user（owner + admin） | SSE 连接 |
-| GET | `/api/research/{task_id}/state` | user（owner + admin） | 执行状态快照 |
+| GET | `/api/research/{task_id}` | user（owner） | 任务状态 |
+| DELETE | `/api/research/{task_id}` | user（owner） | 删除任务 |
+| POST | `/api/research/{task_id}/cancel` | user（owner） | 取消任务 |
+| POST | `/api/research/{task_id}/retry` | user（owner） | 断点续跑 |
+| GET | `/api/research/{task_id}/report` | user（owner） | 获取报告 |
+| GET | `/api/research/{task_id}/stream` | user（owner） | SSE 连接 |
+| GET | `/api/research/{task_id}/state` | user（owner） | 执行状态快照 |
 | GET | `/api/health/workers` | 公开 | Worker 集群健康检查 |
 
 > **权限层级说明**：
 > - **公开**：无需登录即可访问
 > - **user**：登录即可访问（操作自己的资源）
-> - **owner + admin**：仅任务创建者或管理员可访问。admin 拥有审计权限，可查看任意用户的任务，但不可创建/修改他人任务。完整权限模型见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)。
+> - **owner**：仅任务创建者可访问。完整权限模型见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-权限模型)。
 
 ---
 

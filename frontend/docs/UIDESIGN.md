@@ -170,7 +170,6 @@
     /* ===== 布局 ===== */
     --rm-sidebar-width: 256px;            /* w-64 — 全展开侧边栏 */
     --rm-sidebar-width-collapsed: 64px;   /* w-16 — 收起侧边栏 */
-    --rm-sidebar-width-admin: 240px;      /* Admin 侧边栏宽度 */
     --rm-header-height: 56px;
     --rm-content-max-width: 672px;        /* max-w-2xl — 创建表单最大宽 */
     --rm-report-max-width: 768px;         /* max-w-3xl — 报告正文最大宽 */
@@ -358,11 +357,10 @@ ResearchMind 采用暗色侧边栏主题，深色背景（slate-900）。
 
 ### 3.4 页面 Header（深色）
 
-页面顶部 Header 与侧边栏同色系（slate-900 深色），形成统一的深色框架。用户侧（AppLayout）和管理后台侧（AdminLayout）统一使用此方案。
+页面顶部 Header 与侧边栏同色系（slate-900 深色），形成统一的深色框架。
 
 ```css
-.top-header,
-.admin-header {
+.top-header {
     height: var(--rm-header-height);               /* 56px */
     background: var(--rm-bg-sidebar);              /* #0F172A — 与侧边栏同色 */
     border-bottom: 1px solid var(--rm-border-dark); /* #1E293B */
@@ -373,8 +371,7 @@ ResearchMind 采用暗色侧边栏主题，深色背景（slate-900）。
     flex-shrink: 0;
 }
 
-.page-title,
-.admin-page-title {
+.page-title {
     font-size: var(--rm-text-lg);
     font-weight: var(--rm-weight-bold);
     color: var(--rm-text-inverse);                 /* #F8FAFC — 白色标题 */
@@ -823,21 +820,6 @@ ResearchMind 采用暗色侧边栏主题，深色背景（slate-900）。
     text-transform: uppercase;
     letter-spacing: 0.05em;
     padding: 0 var(--rm-space-2);                  /* 0 8px */
-}
-```
-
-#### 管理后台入口按钮
-
-对应侧边栏底部 `text-amber-500` admin 按钮。
-
-```css
-.nav-item.admin-entry {
-    color: #F59E0B;                                /* amber-500 */
-}
-
-.nav-item.admin-entry:hover {
-    background: var(--rm-bg-sidebar-hover);
-    color: #FBBF24;                                /* amber-400 */
 }
 ```
 
@@ -1538,7 +1520,6 @@ position: relative;
 |:---|:---|:---|:---|
 | 用户设置（分组标题） | — | 灰色文字 | 不可点击 |
 | 修改密码 | `fa-key` | `.user-menu-item` | 打开修改密码弹窗 |
-| 进入管理端 | `fa-gears` | `.user-menu-item` (amber 色) | 仅 admin 可见 |
 | 退出登录 | `fa-right-from-bracket` | `.user-menu-item.danger` | 清除 Token 跳转 `/login` |
 
 ---

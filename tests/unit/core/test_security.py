@@ -57,11 +57,11 @@ class TestCreateAccessToken:
     """create_access_token — JWT 签发"""
 
     def test_payload包含sub_username_role三个字段(self):
-        token = create_access_token(user_id=42, username="bob", role="admin")
+        token = create_access_token(user_id=42, username="bob", role="user")
         payload = decode_access_token(token)
         assert payload["sub"] == "42"
         assert payload["username"] == "bob"
-        assert payload["role"] == "admin"
+        assert payload["role"] == "user"
 
     def test_exp字段在合理范围内_约15分钟(self):
         token = create_access_token(user_id=1, username="u", role="user")
@@ -82,11 +82,11 @@ class TestDecodeAccessToken:
     """decode_access_token — JWT 验证"""
 
     def test_有效token返回完整payload(self):
-        token = create_access_token(user_id=1, username="test", role="admin")
+        token = create_access_token(user_id=1, username="test", role="user")
         payload = decode_access_token(token)
         assert payload["sub"] == "1"
         assert payload["username"] == "test"
-        assert payload["role"] == "admin"
+        assert payload["role"] == "user"
 
     def test_过期token返回空dict(self):
         # 构造 1 秒过期的 token

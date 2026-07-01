@@ -97,7 +97,7 @@ async def get_research_task_detail(
     task: ResearchTask = Depends(require_task_accessible),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取研究任务详情（需登录，仅 owner 或 admin）。
+    """获取研究任务详情（需登录，仅 owner）。
 
     对齐 API.md §3.1 GET /api/research/{task_id}。
     含 status / current_phase / progress 进度快照。
@@ -114,7 +114,7 @@ async def delete_research_task(
     task: ResearchTask = Depends(require_task_accessible),
     db: AsyncSession = Depends(get_db),
 ):
-    """删除研究任务（需登录，仅 owner 或 admin）。
+    """删除研究任务（需登录，仅 owner）。
 
     对齐 API.md §3.1 DELETE /api/research/{task_id}。
     FK ON DELETE CASCADE 自动清理全部派生数据（Steps / Sources / Evidence / Report Sections）。
@@ -128,7 +128,7 @@ async def cancel_research_task(
     task: ResearchTask = Depends(require_task_accessible),
     db: AsyncSession = Depends(get_db),
 ):
-    """取消研究任务（需登录，仅 owner 或 admin）。
+    """取消研究任务（需登录，仅 owner）。
 
     对齐 API.md §3.2 POST /api/research/{task_id}/cancel。
     API 层直接 CAS 更新 task.status=canceled；成功后再主动发布 task.canceled
@@ -150,7 +150,7 @@ async def retry_research_task(
     task: ResearchTask = Depends(require_task_accessible),
     db: AsyncSession = Depends(get_db),
 ):
-    """断点续跑（需登录，仅 owner 或 admin）。
+    """断点续跑（需登录，仅 owner）。
 
     对齐 API.md §3.2 POST /api/research/{task_id}/retry。
     从最后 checkpoint 恢复执行，已完成 Step 复用，Evidence 只追加不覆盖。
