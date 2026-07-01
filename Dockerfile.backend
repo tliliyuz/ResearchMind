@@ -1,0 +1,60 @@
+# ResearchMind 后端统一镜像
+# 支持多角色：web / worker / beat / migrate
+#
+# 构建：
+#   docker build -f Dockerfile.backend -t researchmind/backend .
+# 运行：
+#   docker run --rm researchmind/backend web
+#   docker run --rm researchmind/backend worker
+#   docker run --rm researchmind/backend beat
+#   docker run --rm researchmind/backend migrate
+
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+# 安装编译依赖（部分 Python 包需要）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 先单独复制 requirements，利用 Docker 缓存层
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# ── 运行镜像 ──
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PATH=/root/.local/bin:$PATH \
+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+
+# 仅安装运行时所需的最小系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libffi8 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/prometheus /var/lib/celery
+
+# 从 builder 复制已安装的 Python 包
+COPY --from=builder /root/.local /root/.local
+
+# 复制应用代码
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# 确保 entrypoint 可执行
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["web"]

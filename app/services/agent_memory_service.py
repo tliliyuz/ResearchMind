@@ -73,7 +73,7 @@ async def list_memory_entries(
     stmt = (
         sa_select(AgentMemoryEntry)
         .where(AgentMemoryEntry.task_id == task_id)
-        .order_by(AgentMemoryEntry.created_at.asc())
+        .order_by(AgentMemoryEntry.created_at.asc(), AgentMemoryEntry.iteration.asc())
     )
     if entry_type is not None:
         stmt = stmt.where(AgentMemoryEntry.entry_type == entry_type)
@@ -95,7 +95,7 @@ async def build_working_memory(
     stmt = (
         sa_select(AgentMemoryEntry)
         .where(AgentMemoryEntry.task_id == task_id)
-        .order_by(AgentMemoryEntry.created_at.desc())
+        .order_by(AgentMemoryEntry.created_at.desc(), AgentMemoryEntry.iteration.desc())
         .limit(max_entries)
     )
     result = await db.execute(stmt)

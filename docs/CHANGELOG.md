@@ -45,6 +45,24 @@
   - 测试覆盖：`tests/unit/core/test_metrics.py`（指标注册与埋点）、`tests/unit/api/test_metrics.py`（`/metrics` 端点）、`tests/unit/core/test_llm.py` 扩展（`LLMResult` 新字段）、`tests/conftest.py` 新增 Registry 清理 fixture。
   - Celery / Redis 监控选型：**Prometheus Redis Exporter**（`oliver006/redis_exporter`），Grafana 可复用官方 Redis Exporter Dashboard（ID 763）；不引入 Flower，因为 Flower 是独立 UI 无法接入 Grafana。
 
+- **Phase 6 §7.2 [运维] 部署就绪**：
+  - 新增 `Dockerfile.backend`：Python 3.12 slim 多阶段构建，配合 `docker-entrypoint.sh` 支持 `web` / `worker` / `beat` / `migrate` 四种角色，启动前清空 `PROMETHEUS_MULTIPROC_DIR` 旧文件。
+  - 新增 `Dockerfile.frontend`：Node 20 alpine 多阶段构建 Vue 静态资源，Nginx alpine 托管。
+  - 新增 `nginx.conf`：`/api/*` 反向代理到 `backend:8000` 并关闭 `proxy_buffering` 以支持 SSE；静态资源 30 天缓存；`try_files` SPA fallback；`client_max_body_size 10M`。
+  - 新增 `docker-compose.yml`：8 服务编排（`mysql` / `redis` / `backend` / `frontend` / `celery-worker` / `celery-beat` / `prometheus` / `grafana`），持久卷、`env_file` 注入、服务级环境变量覆盖、健康检查、`json-file` 日志驱动轮转、`unless-stopped` 重启策略。
+  - 新增 `prometheus.yml`：抓取目标 `backend:8000/metrics`。
+  - 新增 `app/tasks/periodic.py`：Celery Beat 定时 TTL 清理任务 `cleanup_old_research_tasks`（`completed_at` 超过 `CLEANUP_TASK_MAX_AGE_DAYS` 的研究任务级联清理）与 `cleanup_stale_refresh_tokens`（过期/吊销刷新令牌清理），顺带清理对应任务已不存在的 Redis 孤儿锁 Key。
+  - 修改 `app/tasks/celery_app.py`：注册 `beat_schedule`，每日调度上述两项清理任务。
+  - 新增 Alembic 迁移 `11eb68567494_添加_research_tasks_completed_at_索引用于_ttl_.py`：为 `research_tasks.completed_at` 创建降序索引，加速 TTL 删除。
+  - `.env.example` 追加生产配置项：`ENV` / `LOG_LEVEL` / `TZ` / `UVICORN_WORKERS` / `CELERY_*` / `CLEANUP_*` / `PROMETHEUS_*` / `GRAFANA_*` / `MYSQL_ROOT_PASSWORD` / `RATE_LIMIT_*`。
+  - 新增 `.gitattributes`：强制 `*.sh` 等文本文件使用 LF 换行，避免 shell 脚本在 Linux 容器中因 CRLF 无法执行。
+  - 修复 `app/services/agent_memory_service.py`：在 `list_memory_entries` / `build_working_memory` 查询中增加 `iteration` 作为二级排序键，消除时间戳相同时的 flaky 排序，确保测试与断点续跑加载顺序稳定。
+
+### Changed
+- **Phase 6 §7.2 实现偏差 `[Deviation]`**：
+  - ROADMAP §7.2 原列「5 服务编排（MySQL + Redis + Backend + Celery Worker + Prometheus/Grafana）」。实际落地为 8 服务：`prometheus` 与 `grafana` 拆分为独立服务，且数据 TTL 清理需要独立 `celery-beat` 服务避免 Worker 扩容产生多个调度器。已在 `resource/docs/ROADMAP.md` §7.2 标注 `[Deviation]`。
+  - ROADMAP §7.2 原列「SSE 日志 7 天轮转 / 应用日志 14 天 logrotate」。当前系统 SSE 通过 Redis Pub/Sub 实时转发，无持久化 SSE 日志表；应用日志输出 stdout。落地方式改为 Docker `json-file` 日志驱动按大小/文件数轮转；严格按天保留需后续接入集中式日志系统（Loki/ELK/CloudWatch）。已在 `resource/docs/ROADMAP.md` §7.2 标注 `[Deviation]`。
+
 ### Fixed
 - **人工评估聚合分无法被 `eval_offline.py` 加载**：`app/evaluation/manual.py::validate_manual_record` 要求维度评分为 `int`，聚合后的平均分（如 4.7）被判定为越界并跳过；`app/evaluation/models.py::ManualEvaluationRecord.from_dict` 还将浮点分 `int()` 截断。修复：校验逻辑接受 `int | float`；`ManualDimensionScore.score` 类型改为 `float`；`from_dict` 改用 `float()` 保留小数。新增 `tests/unit/evaluation/test_manual.py::test_浮点评分校验通过且不被截断` 回归测试。
 - **Agent SSE 日志暴露内部敏感/冗长信息**：前端 Step 日志中出现 `plan_tool 结果：planning 阶段执行失败: 500: {'code': 'E3101', ...}` 等包含原始异常 JSON 与 LLM 输出细节的内容，以及 `调用 memory_tool({"limit":5,"operation":"read"})`、`memory_tool 结果：已返回最近 5 条 Working Memory 记录（最近 phase=rerank，最近 tool=rerank_tool）` 等暴露工具参数与内部状态的内容。修复：

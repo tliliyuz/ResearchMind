@@ -36,6 +36,24 @@ celery_app.conf.update(
     broker_transport_options={
         "visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT,
     },
+    # Beat 定时调度：数据 TTL 清理
+    beat_schedule={
+        "cleanup_old_research_tasks": {
+            "task": "app.tasks.periodic.cleanup_old_research_tasks",
+            "schedule": 86400.0,  # 每天执行一次
+            "kwargs": {
+                "max_age_days": getattr(settings, "CLEANUP_TASK_MAX_AGE_DAYS", 30),
+            },
+        },
+        "cleanup_stale_refresh_tokens": {
+            "task": "app.tasks.periodic.cleanup_stale_refresh_tokens",
+            "schedule": 86400.0,  # 每天执行一次
+            "kwargs": {
+                "max_age_days": getattr(settings, "CLEANUP_REFRESH_TOKEN_MAX_AGE_DAYS", 90),
+            },
+        },
+    },
+    beat_max_loop_interval=300,
 )
 
 # Windows: solo 池（默认），避免 eventlet/gevent 与 asyncio 冲突
@@ -46,6 +64,7 @@ if sys.platform == "win32":
 
 # 注册任务模块（导入即注册 @celery_app.task 装饰的任务）
 import app.tasks.research_task
+import app.tasks.periodic  # noqa: F401
 
 
 @worker_ready.connect

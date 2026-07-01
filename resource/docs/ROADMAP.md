@@ -538,12 +538,16 @@ Week 1            Week 1-2             Week 2-3              Week 3-4           
 
 | 状态 | 任务 | 说明 |
 |:---|:---|:---|
-| ⏳ | README.md 完善 | 项目简介 + 快速开始（Docker Compose）+ 文档索引 + 环境变量说明 |
-| ⏳ | Dockerfile × 2 | `Dockerfile.backend`（FastAPI + Celery Worker）+ `Dockerfile.frontend`（Nginx + 静态资源） |
-| ⏳ | docker-compose.yml | 5 服务编排（MySQL + Redis + Backend + Celery Worker + Prometheus/Grafana）+ 数据卷持久化 + 网络隔离 |
-| ⏳ | nginx.conf（前端） | 反向代理 + SSE buffering 关闭 + 静态资源 SPA fallback + `client_max_body_size` |
-| ⏳ | 数据 TTL 清理 | Celery Beat 定时任务：`research_tasks` 30 天清理 / SSE 日志 7 天轮转 / 应用日志 14 天 logrotate |
-| ⏳ | `.env.example` 更新 | 新增 `ENV` / `CORS_ORIGINS` / `RATE_LIMIT_*` / `PROMETHEUS_*` 等生产配置项 |
+| ✅ | README.md 完善 | 项目简介 + 快速开始（Docker Compose）+ 文档索引 + 环境变量说明 |
+| ✅ | Dockerfile × 2 | `Dockerfile.backend`（FastAPI + Celery Worker）+ `Dockerfile.frontend`（Nginx + 静态资源） |
+| ✅ | docker-compose.yml | 8 服务编排（MySQL + Redis + Backend + Frontend + Celery Worker + Celery Beat + Prometheus + Grafana）+ 数据卷持久化 + 网络隔离 `[Deviation]` |
+| ✅ | nginx.conf（前端） | 反向代理 + SSE buffering 关闭 + 静态资源 SPA fallback + `client_max_body_size` |
+| ✅ | 数据 TTL 清理 | Celery Beat 定时任务：`research_tasks` 30 天清理 / Redis 孤儿锁清理 / 刷新令牌过期清理 `[Deviation]` |
+| ✅ | `.env.example` 更新 | 新增 `ENV` / `CORS_ORIGINS` / `RATE_LIMIT_*` / `PROMETHEUS_*` / `GRAFANA_*` / `CLEANUP_*` 等生产配置项 |
+
+> **[Deviation] 服务数量**：ROADMAP 原文写「5 服务编排」。实际落地时 Prometheus 与 Grafana 各为独立服务，且数据 TTL 清理需要独立 `celery-beat` 服务（避免 Worker 扩容产生多个调度器），因此最终为 8 服务。
+>
+> **[Deviation] 日志轮转**：ROADMAP 原文写「SSE 日志 7 天轮转 / 应用日志 14 天 logrotate」。当前系统 SSE 通过 Redis Pub/Sub 实时转发，无持久化 SSE 日志表；应用日志输出 stdout。本阶段统一使用 Docker `json-file` 日志驱动按大小/文件数轮转；严格按天保留需后续接入集中式日志系统（Loki/ELK/CloudWatch）。
 
 ### 7.3 🚫 本阶段不做的
 
