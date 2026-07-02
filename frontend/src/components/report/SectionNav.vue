@@ -1,18 +1,23 @@
 <template>
   <nav class="section-nav">
     <div class="section-nav-title">章节导航</div>
-    <button
-      v-for="section in sections"
-      :key="section.id"
-      class="section-nav-item"
-      :class="{ active: activeId === section.id }"
-      @click="$emit('select', section.id)"
-    >
-      <span class="section-title" :title="section.heading">{{ section.heading }}</span>
-      <span v-if="citationCount(section.id)" class="section-citation-count">
-        {{ citationCount(section.id) }}
-      </span>
-    </button>
+    <div class="section-nav-items">
+      <button
+        v-for="section in sections"
+        :key="section.id"
+        class="section-nav-item"
+        :class="{ active: activeId === section.id }"
+        @click="$emit('select', section.id)"
+      >
+        <span class="section-title" :title="section.heading">{{ section.heading }}</span>
+        <span v-if="citationCount(section.id)" class="section-citation-count">
+          {{ citationCount(section.id) }}
+        </span>
+      </button>
+    </div>
+    <div v-if="$slots.bottom" class="section-nav-bottom">
+      <slot name="bottom" />
+    </div>
   </nav>
 </template>
 
@@ -52,17 +57,35 @@ function citationCount(sectionId) {
   width: var(--rm-section-nav-width);
   background: var(--rm-bg-card);
   border-right: 1px solid var(--rm-border);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
+  overflow: hidden;
   padding: var(--rm-space-2) var(--rm-space-1_5);
 }
 
 .section-nav-title {
+  flex-shrink: 0;
   font-size: var(--rm-text-xs);
   font-weight: var(--rm-weight-bold);
   color: var(--rm-text-primary);
   margin-bottom: var(--rm-space-2);
   padding-left: var(--rm-space-1_5);
+}
+
+.section-nav-items {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.section-nav-bottom {
+  flex-shrink: 0;
+  padding-top: var(--rm-space-2);
+  margin: 0 calc(-1 * var(--rm-space-1_5));
+  padding-left: var(--rm-space-1_5);
+  padding-right: var(--rm-space-1_5);
+  border-top: 1px solid var(--rm-border);
 }
 
 .section-nav-item {

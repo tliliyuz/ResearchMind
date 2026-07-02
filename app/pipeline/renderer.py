@@ -61,7 +61,7 @@ _SYSTEM_PROMPT_TEMPLATE = """你是一个专业研究报告撰写专家。请基
 
 写作要求：
 1. 每个 Section 的内容必须基于提供的证据，不得编造
-2. 每个事实性陈述必须标注来源引用：`[来源N]`，其中 N 是证据详情中的 0-based 编号
+2. 每个事实性陈述必须标注来源引用：`[来源N]`，其中 N 是证据详情中的 0-based 编号。注意：必须是独立的 `[来源N]`，不要写成 `[来源N,M]`、`[来源 N]` 或 `[来源N-M]`，N 从 0 开始计数
 3. Section 末尾列出该节使用的所有来源索引（格式：`[来源N]`，N 为 0-based 编号）
 4. 使用 Markdown 格式，包含标题层级、列表、表格（如需要）
 5. 承认知识缺口——不要为了报告「完整」而编造内容
@@ -307,6 +307,55 @@ async def _call_llm_render(messages: list[dict[str, str]]) -> tuple[str, LLMResu
     raise RenderFailedException(detail=detail)
 
 
+# 匹配 LLM 可能输出的各种非标准引用变体：
+# [来源N] / [来源 N] / [来源N,M] / [来源N，M] / [来源N-M] / [来源 N, M]
+_CITATION_NORMALIZE_RE = re.compile(r"\[\s*来源\s*(\d+(?:\s*[,，\-]\s*\d+)*)\s*\]")
+
+
+def normalize_citation_markup(content: str, valid_count: int | None = None) -> str:
+    """将 LLM 输出的非标准引用格式规范化为独立的 `[来源N]`。
+
+    处理场景：
+    - `[来源 4]` → `[来源4]`（去除来源与数字间的空格）
+    - `[来源4, 5]` / `[来源4,5]` / `[来源4，5]` → `[来源4][来源5]`
+    - `[来源4-5]` → `[来源4][来源5]`
+
+    同时做保守的 1-based → 0-based 修正：当 valid_count 已知且
+    引用中最大值等于 valid_count（即 evidence 总数）时，认为 LLM
+    误用了 1-based 索引，统一减 1。
+
+    Args:
+        content: 章节 Markdown 正文。
+        valid_count: evidence 条目总数（0-based 最大索引 + 1）。
+                     为 None 时跳过 1-based 修正。
+
+    Returns:
+        规范化后的正文。
+    """
+
+    def _replace(match: re.Match) -> str:
+        raw = match.group(1)
+        parts = re.split(r"\s*[,，\-]\s*", raw)
+        indices: list[int] = []
+        for part in parts:
+            try:
+                indices.append(int(part))
+            except ValueError:
+                continue
+        if not indices:
+            return match.group(0)
+
+        # 保守 1-based 检测：最大值恰好等于 evidence 总数时，认为 LLM 从 1 开始计数
+        if valid_count is not None and valid_count > 0:
+            max_idx = max(indices)
+            if max_idx == valid_count and all(i >= 1 for i in indices):
+                indices = [i - 1 for i in indices]
+
+        return "".join(f"[来源{i}]" for i in indices)
+
+    return _CITATION_NORMALIZE_RE.sub(_replace, content)
+
+
 _CITATION_RE = re.compile(r"\[来源\s*(\d+)\]")
 
 
@@ -357,6 +406,7 @@ def _parse_render_output(
     if not isinstance(sections_raw, list):
         raise ValueError("缺少 sections 数组")
 
+    valid_count = len(index_to_item)
     sections: list[RenderSection] = []
     citation_issues = False
 
@@ -370,6 +420,9 @@ def _parse_render_output(
             raise ValueError(f"sections[{i}].heading 为空")
         if not content:
             raise ValueError(f"sections[{i}].content 为空")
+
+        # 规范化 LLM 可能输出的非标准引用格式
+        content = normalize_citation_markup(content, valid_count)
 
         sources, has_invalid = _extract_citations(content, index_to_item)
         if has_invalid:

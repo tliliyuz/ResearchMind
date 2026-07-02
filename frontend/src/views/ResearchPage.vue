@@ -313,6 +313,12 @@ async function handleSubmit() {
       language: form.language,
     }
     const taskData = await taskStore.createTask(form.topic.trim(), requirements)
+
+    if (taskData.direct_answer) {
+      ElMessage.success('已直接回答')
+      return
+    }
+
     ElMessage.success('研究任务已创建，正在执行...')
 
     // 自动连接 SSE

@@ -1009,3 +1009,44 @@ class TestRetryTask:
     async def test_RETRY_ALLOWED_STATUSES_仅含三种状态(self):
         """验证 retry 仅允许 failed / partially_completed / canceled。"""
         assert RETRY_ALLOWED_STATUSES == frozenset({"failed", "partially_completed", "canceled"})
+
+
+# ═══════════════════════════════════════════════════════════════
+# create_task() 意图识别
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCreateTaskIntent:
+    """创建任务时的意图识别门控。"""
+
+    async def test_非研究输入创建direct_answer任务(self, db_session: AsyncSession):
+        req = _make_request(topic="你好")
+        result = await create_task(db_session, user_id=1, request=req)
+
+        assert result.direct_answer is True
+        assert result.status == "completed"
+        assert result.report is not None
+        assert len(result.report.sections) == 1
+        assert result.report.sections[0].heading == "回答"
+        assert "ResearchMind" in result.report.sections[0].content
+
+    async def test_研究输入仍走pending流程(self, db_session: AsyncSession):
+        req = _make_request(topic="量子计算对密码学的影响")
+        result = await create_task(db_session, user_id=1, request=req)
+
+        assert result.direct_answer is False
+        assert result.status == "pending"
+        assert result.report is None
+
+    async def test_direct_answer任务可被get_report读取(self, db_session: AsyncSession):
+        req = _make_request(topic="谢谢")
+        result = await create_task(db_session, user_id=1, request=req)
+
+        task = await db_session.get(ResearchTask, result.task_id)
+        report_result = await get_report(db_session, task)
+
+        assert report_result.status == "completed"
+        assert report_result.report.title == "谢谢"
+        assert len(report_result.report.sections) == 1
+        assert report_result.evidence_graph["items"] == []
+        assert report_result.evidence_graph["sources"] == []

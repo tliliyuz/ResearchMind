@@ -869,3 +869,51 @@ class TestRetryResearchAPI:
         response = await async_client.post(f"/api/research/{task.id}/retry", headers=auth_headers)
         assert response.status_code == 409
         assert response.json()["code"] == "E2003"
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/research — 意图识别
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCreateResearchIntentAPI:
+    """创建任务时的意图识别 API 层行为。"""
+
+    async def test_问候语创建返回completed和direct_answer(
+        self, async_client: AsyncClient, auth_headers: dict
+    ):
+        with patch("app.api.research._execute_research_task.delay") as mock_delay:
+            response = await async_client.post(
+                "/api/research",
+                json={"topic": "你好", "requirements": {"task_type": "analysis"}},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["code"] == "0"
+        assert data["message"] == "直接回答已生成"
+        assert data["data"]["status"] == "completed"
+        assert data["data"]["direct_answer"] is True
+        assert "report" in data["data"]
+        assert data["data"]["report"]["sections"][0]["heading"] == "回答"
+        mock_delay.assert_not_called()
+
+    async def test_研究主题仍触发celery_delay(
+        self, async_client: AsyncClient, auth_headers: dict
+    ):
+        with patch("app.api.research._execute_research_task.delay") as mock_delay:
+            response = await async_client.post(
+                "/api/research",
+                json={
+                    "topic": "量子计算对密码学的影响",
+                    "requirements": {"task_type": "analysis"},
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["data"]["status"] == "pending"
+        assert data["data"]["direct_answer"] is False
+        mock_delay.assert_called_once()

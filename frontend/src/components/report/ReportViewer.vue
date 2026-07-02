@@ -49,7 +49,14 @@
           :active-id="reportStore.selectedSectionId"
           :evidence="reportStore.evidence"
           @select="reportStore.selectSection"
-        />
+        >
+          <template #bottom>
+            <div v-if="isDirectAnswer" class="direct-answer-banner">
+              <i class="fas fa-bolt"></i>
+              <span>直接回答</span>
+            </div>
+          </template>
+        </SectionNav>
 
         <ReportArticle
           :sections="reportStore.sections"
@@ -94,6 +101,7 @@ const title = computed(() => reportStore.report?.report?.title || props.task?.to
 const completedAt = computed(() => props.task?.completed_at)
 const totalSources = computed(() => props.task?.total_sources || 0)
 const totalEvidence = computed(() => props.task?.total_evidence || 0)
+const isDirectAnswer = computed(() => props.task?.requirements?.task_type === 'direct_answer')
 
 // 进入完成态时自动加载报告
 watch(() => props.task?.task_id, (taskId) => {
@@ -174,6 +182,18 @@ watch(() => props.task?.task_id, (taskId) => {
   display: grid;
   grid-template-columns: var(--rm-section-nav-width) var(--rm-report-article-width) var(--rm-evidence-panel-width);
   overflow: hidden;
+}
+
+.direct-answer-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rm-space-1_5);
+  padding: var(--rm-space-1_5) var(--rm-space-3);
+  background: var(--rm-warning-light, #FEF3C7);
+  color: var(--rm-warning, #D97706);
+  border-radius: var(--rm-radius-md);
+  font-size: var(--rm-text-sm);
+  font-weight: var(--rm-weight-semibold);
 }
 
 .report-side-panel {

@@ -16,7 +16,7 @@ from app.models.research_step import ResearchStep
 from app.models.research_task import ResearchTask
 from app.models.section_evidence import SectionEvidence
 from app.models.user import User
-from app.pipeline.renderer import run_render
+from app.pipeline.renderer import run_render, normalize_citation_markup
 from app.pipeline.sse_bridge import EVENT_STEP_COMPLETED, EVENT_STEP_PROGRESS
 
 
@@ -520,3 +520,74 @@ class TestRenderConsistency:
                 await run_render(task, render_step, db_session, sse)
 
         assert exc_info.value.error_code == "E3107"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 引用格式规范化
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCitationNormalization:
+    """LLM 引用格式变体统一规范化为独立 [来源N]。"""
+
+    def test_合并引用拆分为独立锚点(self):
+        """[来源0,1] / [来源0, 1] / [来源0，1] 拆为 [来源0][来源1]。"""
+        content = "参见[来源0,1]与[来源0，1]以及[来源0, 1]。"
+        assert normalize_citation_markup(content) == "参见[来源0][来源1]与[来源0][来源1]以及[来源0][来源1]。"
+
+    def test_短横线连接引用拆分为独立锚点(self):
+        """[来源0-1] 拆为 [来源0][来源1]。"""
+        assert normalize_citation_markup("参见[来源0-1]。") == "参见[来源0][来源1]。"
+
+    def test_来源与数字间空格去除(self):
+        """[来源 0] / [来源 0, 1] 去空格并拆分。"""
+        content = "参见[来源 0]与[来源 0, 1]。"
+        assert normalize_citation_markup(content) == "参见[来源0]与[来源0][来源1]。"
+
+    def test_保守修正1based索引(self):
+        """evidence 总数为 2 且最大值为 2 时，判定为 1-based 并减 1。"""
+        content = "参见[来源1,2]。"
+        assert normalize_citation_markup(content, valid_count=2) == "参见[来源0][来源1]。"
+
+    def test_0based索引不因valid_count误判(self):
+        """evidence 总数为 3 时，[来源0,1] 保持 0-based 不变。"""
+        content = "参见[来源0,1]。"
+        assert normalize_citation_markup(content, valid_count=3) == "参见[来源0][来源1]。"
+
+    def test_1based修正要求所有索引大于等于1(self):
+        """包含 0 时不触发 1-based 修正。"""
+        content = "参见[来源0,2]。"
+        assert normalize_citation_markup(content, valid_count=2) == "参见[来源0][来源2]。"
+
+    def test_无valid_count时不做1based修正(self):
+        """valid_count 为 None 时保持原数字。"""
+        content = "参见[来源1,2]。"
+        assert normalize_citation_markup(content) == "参见[来源1][来源2]。"
+
+    @pytest.mark.asyncio
+    async def test_合并引用在parse_render_output中被规范化(self, db_session):
+        """Render 输出中的 [来源0,1] 会被拆分并正确建立 section_evidence。"""
+        task, render_step, _ = await _seed_render_task(db_session, evidence_count=2)
+        sse = AsyncMock()
+        sections = [
+            {
+                "heading": "1. 合并引用",
+                "content": "量子计算威胁[来源0,1]。",
+            }
+        ]
+
+        with patch("app.pipeline.renderer.chat_completion") as mock_llm:
+            mock_llm.return_value = _mock_llm_report(sections)
+            output = await run_render(task, render_step, db_session, sse)
+
+        assert output["citations_count"] == 2
+
+        stmt = select(ReportSection).where(ReportSection.task_id == task.id)
+        result = await db_session.execute(stmt)
+        report_section = result.scalar_one()
+        assert report_section.content == "量子计算威胁[来源0][来源1]。"
+
+        stmt = select(SectionEvidence).where(SectionEvidence.section_id == report_section.id)
+        result = await db_session.execute(stmt)
+        associations = list(result.scalars().all())
+        assert len(associations) == 2

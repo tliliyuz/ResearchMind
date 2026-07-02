@@ -61,6 +61,48 @@
 
 本文档描述 v1.0 MVP 的管线行为。以 `[v1.5]` / `[v2]` 标记预留的扩展点。各版本演进路线见 [ROADMAP.md](ROADMAP.md)。
 
+### 1.4 意图识别门控
+
+用户输入并不总是研究主题。问候、致谢、闲聊等输入若进入完整七阶段 Pipeline，会浪费 Token、搜索配额与等待时间。因此入口前设有一道**同步意图识别门控**，决定输入走向：
+
+| 分支 | 判定 | 行为 |
+|:---|:---|:---|
+| **直接回答** | 规则命中（问候/致谢/告别/自我介绍/过短）或 LLM 判定为非研究 | 创建 `completed` 任务，返回单章节报告，不进入 Pipeline |
+| **研究意图** | 研究关键词命中或 LLM 判定为研究 | 创建 `pending` 任务，启动七阶段 Pipeline |
+
+**实现位置**：`app/services/intent_classifier.py`。
+
+**混合策略**：
+1. 规则快路径：零 Token 覆盖 obvious 非研究输入。
+2. 研究关键词快路径：命中明确研究关键词时直接返回 research，避免为 obvious 研究主题调用 LLM。
+3. LLM 回退：规则未命中且输入较短（≤120 字符）时，调用 `settings.LLM_FLASH_MODEL` 输出 JSON：`{"intent": "research|direct_answer", "direct_answer": "...", "reason": "..."}`。任何解析/调用异常降级为 research。
+
+**Prompt 模板**：
+
+```
+你是 ResearchMind 的意图识别器。判断用户输入是否希望启动深度研究，还是只需要闲聊/问候/致谢/简单问答。
+你只输出 JSON，不要任何解释。
+
+输出格式：
+{
+  "intent": "research" | "direct_answer",
+  "direct_answer": "若 intent=direct_answer，给出简短、友好、与用户输入同语言的回答（不超过150字）；否则空字符串",
+  "reason": "判断理由，不超过30字"
+}
+
+判断规则（按优先级）：
+1. 输入是问候、寒暄、感谢、告别、自我介绍、无明确研究主题 → direct_answer
+2. 输入要求对比、分析、解释、调研、查找资料、总结某个主题 → research
+3. 输入包含具体实体、问题、技术、产品、事件 → research
+4. 不确定时，优先 research，避免漏判真正研究需求
+```
+
+调用参数：`model=settings.LLM_FLASH_MODEL`、`temperature=0.0`、`max_tokens=250`。
+
+直接回答任务持久化为 `requirements.task_type=direct_answer`，并写入一条 `report_sections` 单章节与一条空的 `evidence_graph` Step，使 `GET /report` 与历史列表无需改动即可复用。
+
+> **权威定义**：[API.md §3.1 POST /api/research](resource/docs/API.md#31-任务生命周期) ｜ [ARCHITECTURE.md §2.4](ARCHITECTURE.md#24-意图识别门控) ｜ 决策记录 `docs/decisions/ADR-004-intent-recognition.md`
+
 ---
 
 ## 2. Planning — 研究主题拆解

@@ -30,6 +30,10 @@ from app.models.report_section import ReportSection
 from app.models.research_task import ResearchTask
 from app.models.research_step import ResearchStep
 from app.models.section_evidence import SectionEvidence
+from app.services.intent_classifier import (
+    INTENT_DIRECT_ANSWER,
+    classify_intent,
+)
 from app.services.pipeline_orchestrator import PHASE_ORDER
 from app.schemas.research import (
     ProgressSchema,
@@ -61,18 +65,29 @@ async def create_task(
     user_id: int,
     request: ResearchCreateRequest,
 ) -> ResearchCreateResponse:
-    """创建研究任务 + 首个 Planning Step。
+    """创建研究任务 + 首个 Planning Step（或直接回答）。
 
-    1. 校验 topic 长度与 requirements 合法性
-    2. 写入 research_tasks (status=pending)
-    3. 写入首个 research_step (planning, pending)
-    4. 返回 task_id + status + created_at
+    1. 意图识别：非研究输入直接生成 completed 任务与单章节报告
+    2. 研究输入：写入 research_tasks (status=pending) + 首个 planning step
 
     注意：Celery 分发（commit + delay）由 API 层在返回前执行，
     避免在 Service 层 commit 破坏测试事务隔离。
     """
     _validate_create_request(request)
 
+    intent_result = await classify_intent(request.topic)
+    if intent_result.intent == INTENT_DIRECT_ANSWER:
+        return await _create_direct_answer_task(db, user_id, request, intent_result.direct_answer)
+
+    return await _create_research_task(db, user_id, request)
+
+
+async def _create_research_task(
+    db: AsyncSession,
+    user_id: int,
+    request: ResearchCreateRequest,
+) -> ResearchCreateResponse:
+    """研究意图：创建 pending 任务 + planning step。"""
     now = datetime.now(timezone.utc)
 
     # 1. 创建研究任务
@@ -117,6 +132,97 @@ async def create_task(
         task_id=task.id,
         status="pending",
         created_at=task.created_at,
+        direct_answer=False,
+    )
+
+
+async def _create_direct_answer_task(
+    db: AsyncSession,
+    user_id: int,
+    request: ResearchCreateRequest,
+    answer_text: str,
+) -> ResearchCreateResponse:
+    """非研究意图：创建已完成任务、单章节报告与空 Evidence Graph Step。
+
+    直接回答任务复用现有报告接口，可进入历史列表并支持审计。
+    """
+    now = datetime.now(timezone.utc)
+    requirements = request.requirements.model_dump()
+    requirements["task_type"] = "direct_answer"
+    language = requirements.get("language", "zh")
+
+    task = ResearchTask(
+        user_id=user_id,
+        topic=request.topic.strip(),
+        requirements=requirements,
+        status="completed",
+        current_phase=None,
+        created_at=now,
+        started_at=now,
+        completed_at=now,
+        total_steps=0,
+        completed_steps=0,
+    )
+    db.add(task)
+    await db.flush()
+
+    # 单章节报告
+    heading = "回答" if language.startswith("zh") else "Answer"
+    section = ReportSection(
+        task_id=task.id,
+        heading=heading,
+        content=answer_text,
+        sort_order=0,
+    )
+    db.add(section)
+
+    # 空 Evidence Graph Step，使 get_report() 可直接读取
+    eg_step = ResearchStep(
+        task_id=task.id,
+        step_type="evidence_graph",
+        status="completed",
+        label="直接回答",
+        input={"topic": request.topic.strip()},
+        output={
+            "graph": {
+                "items": [],
+                "sources": [],
+                "generated_at": now.isoformat(),
+            }
+        },
+        started_at=now,
+        completed_at=now,
+        duration_ms=0,
+    )
+    db.add(eg_step)
+    await db.flush()
+
+    logger.info(
+        "直接回答任务已创建: task_id=%s, user_id=%d, topic=%s",
+        task.id, user_id, request.topic[:50],
+    )
+
+    emit_task_status_transition("completed")
+
+    # 直接构造报告响应，避免创建过程中 ORM 对象过期列触发隐式懒加载
+    report = ReportSchema(
+        title=task.topic,
+        generated_at=now,
+        sections=[
+            ReportSectionSchema(
+                heading=heading,
+                content=answer_text,
+                sources=[],
+            )
+        ],
+        sources=[],
+    )
+    return ResearchCreateResponse(
+        task_id=task.id,
+        status="completed",
+        created_at=task.created_at,
+        direct_answer=True,
+        report=report,
     )
 
 
