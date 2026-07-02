@@ -13,16 +13,20 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# 安装编译依赖（部分 Python 包需要）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    gcc \
-    libffi-dev \
+# 替换 Debian 源为阿里云镜像，避免国内服务器 apt-get 卡住
+RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 先单独复制 requirements，利用 Docker 缓存层
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
+    && pip install --no-cache-dir --user -r requirements.txt
 
 # ── 运行镜像 ──
 FROM python:3.12-slim AS runtime
@@ -36,9 +40,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/root/.local/bin:$PATH \
     PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
 
-# 仅安装运行时所需的最小系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libffi8 \
+# 仅安装运行时所需的最小系统依赖（同样使用阿里云源）
+RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libffi8 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /tmp/prometheus /var/lib/celery
 
