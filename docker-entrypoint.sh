@@ -6,10 +6,10 @@ set -e
 
 ROLE="${1:-web}"
 
-# 多进程 Prometheus 指标聚合需要清空旧文件
-if [ -d "$PROMETHEUS_MULTIPROC_DIR" ]; then
-    rm -rf "${PROMETHEUS_MULTIPROC_DIR:?}"/*
-fi
+# 注意：不再自动清空 PROMETHEUS_MULTIPROC_DIR。
+# web / worker / beat 三个容器共享同一个 prometheus_multiproc 卷，
+# 任意一方清空都会导致其他容器已写入的指标文件丢失。
+# 如需彻底清理旧指标，可手动执行：docker compose down -v
 
 case "$ROLE" in
     web)

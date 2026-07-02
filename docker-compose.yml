@@ -86,6 +86,8 @@ services:
     # 保持原始端口 8000，仅绑定本机，由宿主机 Nginx 反向代理
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - prometheus_multiproc:/tmp/prometheus
     networks:
       - researchmind
     healthcheck:
@@ -126,6 +128,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - prometheus_multiproc:/tmp/prometheus
     networks:
       - researchmind
     healthcheck:
@@ -164,6 +168,7 @@ services:
         condition: service_healthy
     volumes:
       - celery_beat_schedule:/var/lib/celery
+      - prometheus_multiproc:/tmp/prometheus
     networks:
       - researchmind
     logging:
@@ -232,6 +237,7 @@ volumes:
   prometheus_data:
   grafana_data:
   celery_beat_schedule:
+  prometheus_multiproc:
 
 networks:
   researchmind:
