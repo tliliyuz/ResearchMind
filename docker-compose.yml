@@ -65,7 +65,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    image: researchmind/backend
     container_name: researchmind-backend
     restart: unless-stopped
     mem_limit: 512m
