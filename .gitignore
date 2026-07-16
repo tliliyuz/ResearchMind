@@ -35,3 +35,11 @@ dist/
 /CLAUDE.md
 /.claude/commands/review.md
 /frontend/node_modules/
+
+# 批量脚本运行产物
+scripts/data/batch_progress.json
+scripts/output/
+scripts/logs/
+/scripts/batch_research_runner.py
+/scripts/README_BATCH.md
+/scripts/data/example_tasks.json
